@@ -571,6 +571,90 @@ function applyState(state) {
     }
 }
 
+function swapDirection(dx, dy) {
+    try {
+        const activeWindow = workspace.activeWindow;
+        if (!activeWindow) {
+            return;
+        }
+
+        const root = resolveRoot(activeWindow);
+        const state = findStateContaining(root);
+        if (!state) {
+            return;
+        }
+
+        const activeIndex = state.slots.indexOf(root);
+        if (activeIndex === -1) {
+            return;
+        }
+        if (state.slots.length < 2) {
+            return;
+        }
+        if (root.fullScreen) {
+            return;
+        }
+
+        const area = workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop);
+        if (!area || area.width <= 0 || area.height <= 0) {
+            print("quarter-tiler: empty work area, skipping swap");
+            return;
+        }
+
+        const rects = slotRects(state.slots.length, area, GAP);
+        const targetIndex = directionalTarget(rects, activeIndex, dx, dy);
+        if (targetIndex === -1) {
+            return;
+        }
+
+        state.slots = swapSlots(state.slots, activeIndex, targetIndex);
+        scheduleApply(state);
+
+        if (activeWindow === root) {
+            workspace.activeWindow = root;
+        }
+    } catch (e) {
+        print(`quarter-tiler: swapDirection failed: ${e}`);
+    }
+}
+
+function registerShortcutLogged(title, text, sequence, callback) {
+    if (!registerShortcut(title, text, sequence, callback)) {
+        print(`quarter-tiler: failed to register shortcut "${title}" (${sequence})`);
+    }
+}
+
+function registerAllShortcuts() {
+    try {
+        registerShortcutLogged(
+            "Quarter Tiler: Swap Left",
+            "Swap window left",
+            "Meta+Left",
+            () => swapDirection(-1, 0)
+        );
+        registerShortcutLogged(
+            "Quarter Tiler: Swap Right",
+            "Swap window right",
+            "Meta+Right",
+            () => swapDirection(1, 0)
+        );
+        registerShortcutLogged(
+            "Quarter Tiler: Swap Up",
+            "Swap window up",
+            "Meta+Up",
+            () => swapDirection(0, -1)
+        );
+        registerShortcutLogged(
+            "Quarter Tiler: Swap Down",
+            "Swap window down",
+            "Meta+Down",
+            () => swapDirection(0, 1)
+        );
+    } catch (e) {
+        print(`quarter-tiler: registerAllShortcuts failed: ${e}`);
+    }
+}
+
 function connectSignal(signal, handler) {
     if (signal && typeof signal.connect === "function") {
         signal.connect(handler);
@@ -702,6 +786,7 @@ function main() {
         workspace.windowAdded.connect(onWindowAdded);
         workspace.windowRemoved.connect(onWindowRemoved);
         workspace.windowActivated.connect(onWindowActivated);
+        registerAllShortcuts();
         replayExistingWindows();
     } catch (e) {
         print(`quarter-tiler: main failed: ${e}`);
@@ -733,6 +818,8 @@ if (typeof module !== "undefined" && module.exports) {
         scheduleApply,
         verifyState,
         applyState,
+        swapDirection,
+        registerAllShortcuts,
         pruneState,
         isAlive,
         windowId,
