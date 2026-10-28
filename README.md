@@ -14,12 +14,14 @@ load included or required files, so the bundle is the only runtime artifact.
 - KDE Plasma 6 on a Wayland session.
 - KWin 6.x.
 - `kpackagetool6` and `kwriteconfig6` (part of Plasma).
-- `qdbus6` (part of Qt 6 tools) to reload KWin's configuration.
+- `qdbus6`, `qdbus`, or `dbus-send` to reload KWin's configuration.
 - Node.js 18 or newer to build the bundle and run the automated tests. It is
   not needed at runtime.
 
 X11 sessions and Plasma 5 are not supported. Tile state is held in memory and
-does not survive a KWin restart or login.
+does not survive a KWin restart or login. Plasma 6.7 per-output virtual
+desktops are supported; older KWin versions fall back to the global current
+desktop.
 
 ## Source layout
 
@@ -119,7 +121,8 @@ owns the key), the script logs the failure. Assign the action manually under
 KWin's drag-to-edge quick tiling fights the tiler: it can move or maximize a
 window before Kwarter's drop handler runs. Turn it off:
 
-1. Open **System Settings > Window Management > Window Behavior > Moving**.
+1. Open **System Settings > Window Management > Window Behavior > Advanced**
+   (the exact page label may differ by Plasma version).
 2. Set **Drag windows to screen edges to tile** (or the equivalent quick
    tiling option) to **Disabled** / **No**.
 
@@ -222,9 +225,10 @@ window is not tiled until it leaves fullscreen.
 - A slot rectangle smaller than a window's minimum size is clamped to the minimum, so the window may overlap the gap.
 - Enabling or re-enabling the script with more than four eligible windows
   minimizes the oldest windows during replay.
-- Automated tests cover pure layout math, eligibility, and victim-selection
-  and blocking helpers. Window lifecycle and signal behavior are covered by
-  the manual matrix below.
+- Automated tests cover pure layout math, eligibility, victim selection and
+  blocking, per-output desktop selection, and add/overflow/restore lifecycle
+  behavior. Signal timing on a live KWin session is covered by the manual
+  matrix below.
 
 ## Development
 
@@ -240,9 +244,10 @@ node --test tests/*.test.js
 after every source change and commit the regenerated runtime.
 
 The tests use Node's built-in test runner (Node.js 18 or newer). They cover the
-pure layout and eligibility helpers, victim selection, the no-`Qt.` and
-`QTimer` runtime constraints, and bundle freshness: the committed runtime must
-equal a fresh `bundle()`. No KWin session and no npm packages are required.
+pure layout and eligibility helpers, victim selection, per-output desktop
+selection, add/overflow/restore lifecycle behavior, the no-`Qt.` and `QTimer`
+runtime constraints, and bundle freshness: the committed runtime must equal a
+fresh `bundle()`. No KWin session and no npm packages are required.
 
 To follow the installed script's log output:
 
