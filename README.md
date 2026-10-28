@@ -2,7 +2,12 @@
 
 Automatic quarter tiling for KWin 6. Kwarter keeps up to four normal
 application windows tiled on each screen. It is a zero-configuration script:
-there is no settings page, no config file, and no build step.
+there is no settings page and no config file.
+
+The runtime that KWin loads is the single generated file
+`contents/code/main.js`. Its source lives in focused CommonJS modules under
+`src/`, and `tools/build.js` bundles them into that runtime file. KWin cannot
+load included or required files, so the bundle is the only runtime artifact.
 
 ## Requirements
 
@@ -10,10 +15,41 @@ there is no settings page, no config file, and no build step.
 - KWin 6.x.
 - `kpackagetool6` and `kwriteconfig6` (part of Plasma).
 - `qdbus6` (part of Qt 6 tools) to reload KWin's configuration.
-- Node.js 18 or newer to run the automated tests. It is not needed at runtime.
+- Node.js 18 or newer to build the bundle and run the automated tests. It is
+  not needed at runtime.
 
 X11 sessions and Plasma 5 are not supported. Tile state is held in memory and
 does not survive a KWin restart or login.
+
+## Source layout
+
+```
+src/
+├── index.js              entry point: loads bootstrap and calls main()
+├── bootstrap.js          wires signals, shortcuts, and replay
+├── shortcuts.js          registers Meta+Arrow actions
+├── core/
+│   ├── layout.js         slot math and pure helpers
+│   ├── registry.js       mutable connection and warning registries
+│   ├── windows.js        window identity, output, desktop, eligibility
+│   ├── timing.js         QTimer-based deferral
+│   ├── state.js          per-output/desktop slot, LRU, and restore state
+│   ├── schedule.js       coalesced apply scheduling
+│   └── apply.js          geometry and maximize application
+├── actions/
+│   ├── lifecycle.js      add, remove, and replay windows
+│   ├── swap.js           directional shortcut swap
+│   └── drag.js           drag-start, drop, and snap-back handling
+└── signals/
+    ├── window.js         per-window signal handlers
+    └── workspace.js      workspace, output, dock, desktop, activity handlers
+tools/build.js            zero-dependency CommonJS bundler
+```
+
+The bundler embeds an IIFE and a small module registry, resolves relative
+`require` calls, rejects bare imports, and writes a deterministic file. The
+generated `contents/code/main.js` carries a header that marks it as generated.
+Edit `src/` and rebuild; do not edit the runtime file by hand.
 
 ## Install
 
@@ -190,23 +226,23 @@ window is not tiled until it leaves fullscreen.
   and blocking helpers. Window lifecycle and signal behavior are covered by
   the manual matrix below.
 
-## Tests
-
-The pure layout, eligibility, victim-selection, and runtime-source checks are
-tested with Node's built-in test runner (Node.js 18 or newer). No KWin session
-and no npm packages are required.
+## Development
 
 From the repository root:
 
 ```bash
-node --test tests/layout.test.js tests/runtime.test.js
-```
-
-Optional syntax check:
-
-```bash
+node tools/build.js
 node --check contents/code/main.js
+node --test tests/*.test.js
 ```
+
+`node tools/build.js` regenerates `contents/code/main.js` from `src/`. Run it
+after every source change and commit the regenerated runtime.
+
+The tests use Node's built-in test runner (Node.js 18 or newer). They cover the
+pure layout and eligibility helpers, victim selection, the no-`Qt.` and
+`QTimer` runtime constraints, and bundle freshness: the committed runtime must
+equal a fresh `bundle()`. No KWin session and no npm packages are required.
 
 To follow the installed script's log output:
 

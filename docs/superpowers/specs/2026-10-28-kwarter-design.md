@@ -66,7 +66,9 @@ The script is a pure geometry manager. It does not use KWin's native tile tree. 
 - Use JavaScript KWin script packaging (`X-Plasma-API: javascript`).
 - Use `frameGeometry` for geometry writes; `geometry` and `clientGeometry` are deprecated for this purpose.
 - Use `workspace.clientArea(KWin.MaximizeArea, output, desktop)` so panels and struts are respected.
-- No new dependencies, no build step, no settings module.
+- No new dependencies and no settings module. Source modules are bundled at
+  development time; KWin runs one generated JavaScript file with no runtime
+  build step.
 - Keep the runtime to one JavaScript file plus `metadata.json`.
 - Fixed gap: 6 logical pixels. Each tile is inset by 3 pixels on every side.
 - Maximum four visible tiled windows per `(output, desktop)`.
@@ -128,28 +130,84 @@ Alternatives considered:
 ├── metadata.json
 ├── contents/
 │   └── code/
-│       └── main.js
+│       └── main.js        generated runtime bundle (only file KWin loads)
+├── src/
+│   ├── index.js
+│   ├── bootstrap.js
+│   ├── shortcuts.js
+│   ├── core/
+│   │   ├── layout.js
+│   │   ├── registry.js
+│   │   ├── windows.js
+│   │   ├── timing.js
+│   │   ├── state.js
+│   │   ├── schedule.js
+│   │   └── apply.js
+│   ├── actions/
+│   │   ├── lifecycle.js
+│   │   ├── swap.js
+│   │   └── drag.js
+│   └── signals/
+│       ├── window.js
+│       └── workspace.js
+├── tools/
+│   └── build.js
 ├── tests/
-│   └── layout.test.js
+│   ├── layout.test.js
+│   └── runtime.test.js
 ├── README.md
 └── docs/
 ```
 
-KWin's JavaScript API loads exactly one entry file and provides no `include` or module loader. `main.js` therefore contains both the pure layout functions and the KWin wiring. Pure functions are defined at the top; signal wiring, state, lifecycle, shortcuts, drag handling, and geometry application follow.
+KWin's JavaScript API loads exactly one entry file and provides no `include`,
+`require`, or module loader. `contents/code/main.js` is therefore a generated
+bundle and the only runtime file. Its source is split into focused CommonJS
+modules under `src/`.
 
-`main.js` ends with a dual bootstrap:
+`tools/build.js` is a zero-dependency Node bundler. It walks relative
+`require` calls from `src/index.js`, rejects bare imports, embeds each module
+in an IIFE with a small module registry, and writes a deterministic
+`contents/code/main.js` with a generated-file header. `src/index.js` contains
+`require("./bootstrap").main();`, and `bootstrap.main` sets the apply handler
+before wiring signals or replaying windows.
 
-```js
-if (typeof module !== "undefined" && module.exports) {
-    module.exports = { slotRects, directionalTarget, chooseVictim, swapSlots };
-} else {
-    main();
-}
+Module responsibilities:
+
+- `src/core/layout.js`: pure slot math and rectangle helpers.
+- `src/core/registry.js`: mutable connection and warning registries.
+- `src/core/windows.js`: window identity, output, desktop, activity, and
+  eligibility helpers, plus native-tile detachment.
+- `src/core/timing.js`: `QTimer`-based `defer`.
+- `src/core/state.js`: per-`(output, desktop)` slot, LRU, and restore state.
+- `src/core/schedule.js`: coalesced apply scheduling with an injected handler.
+- `src/core/apply.js`: geometry, maximize, and verification application.
+- `src/actions/lifecycle.js`: add, remove, and replay.
+- `src/actions/swap.js`: directional shortcut swap.
+- `src/actions/drag.js`: drag start/finish, drop, and snap-back.
+- `src/signals/window.js`: per-window signal handlers.
+- `src/signals/workspace.js`: workspace, output, dock, desktop, and activity
+  handlers.
+- `src/shortcuts.js`: shortcut registration.
+- `src/bootstrap.js`: `main`, which wires everything.
+
+The dependency direction avoids cycles: layout is a leaf; windows depends on
+layout and registry; state depends on layout, windows, registry, and schedule;
+schedule depends only on timing; apply depends on layout, windows, state, and
+timing; actions depend on core modules; signals depend on actions and state;
+bootstrap depends on signals, shortcuts, lifecycle, apply, and schedule.
+
+Build and test:
+
+```bash
+node tools/build.js
+node --check contents/code/main.js
+node --test tests/*.test.js
 ```
 
-Node imports the same file through `module.exports`. KWin has no `module`, so it runs `main()`. No build step, no bundler, and no second runtime file are required.
-
-`tests/layout.test.js` runs with `node --test`. No test framework or package installation.
+`tests/layout.test.js` imports the source modules directly through Node's
+CommonJS loader. `tests/runtime.test.js` checks the generated runtime source
+and verifies that the committed file equals a fresh `bundle()`. No test
+framework, package installation, or KWin session is required.
 
 There is no settings UI, no QML, and no persisted configuration.
 
@@ -558,7 +616,7 @@ When a parent is chosen as an LRU victim, the victim selector skips it if it has
 
 ### 12.1 Automated pure-function tests
 
-`tests/layout.test.js` and `tests/runtime.test.js` use Node's built-in `node:test` and `node:assert`. The layout tests import `contents/code/main.js` through the `module.exports` guard; importing the file must not execute `main()` under Node. The runtime test reads the source text and asserts that it contains no global `Qt.` usage and uses `new QTimer()` for deferral.
+`tests/layout.test.js` and `tests/runtime.test.js` use Node's built-in `node:test` and `node:assert`. The layout tests import the source modules under `src/` directly; importing them must not execute `main()`. The runtime test reads `contents/code/main.js`, asserts that it contains no global `Qt.` usage, uses `new QTimer()` for deferral, and equals a fresh `bundle()` from `tools/build.js`.
 
 Coverage:
 
