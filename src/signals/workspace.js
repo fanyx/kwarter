@@ -26,6 +26,8 @@ const { scheduleApply } = require("../core/schedule");
 const { addWindow } = require("../actions/lifecycle");
 const { isDragOwned } = require("../actions/drag");
 
+const outputHandlers = new Map();
+
 function connectSignal(signal, handler, name) {
     if (signal && typeof signal.connect === "function") {
         signal.connect(handler);
@@ -89,12 +91,32 @@ function connectOutputSignals(output) {
     if (!output || connectedOutputs.has(output)) {
         return;
     }
+    const handler = () => onOutputGeometryChanged(output);
     connectedOutputs.add(output);
+    outputHandlers.set(output, handler);
     connectSignal(
         output.geometryChanged,
-        () => onOutputGeometryChanged(output),
+        handler,
         "output.geometryChanged"
     );
+}
+
+function disconnectOutputSignals(output) {
+    const handler = outputHandlers.get(output);
+    if (
+        handler &&
+        output &&
+        output.geometryChanged &&
+        typeof output.geometryChanged.disconnect === "function"
+    ) {
+        try {
+            output.geometryChanged.disconnect(handler);
+        } catch (e) {
+            print(`kwarter: output signal disconnect failed: ${e}`);
+        }
+    }
+    outputHandlers.delete(output);
+    connectedOutputs.delete(output);
 }
 
 function moveWindowBetweenStates(w, oldState) {
@@ -217,9 +239,9 @@ function onCurrentActivityChanged() {
 
 function onScreensChanged() {
     try {
-        for (const output of connectedOutputs) {
+        for (const output of Array.from(connectedOutputs)) {
             if (!contains(workspace.screens, output)) {
-                connectedOutputs.delete(output);
+                disconnectOutputSignals(output);
             }
         }
         for (const output of workspace.screens) {
