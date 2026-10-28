@@ -511,7 +511,11 @@ function pruneState(state) {
     const minimized = state.minimized.filter((w) => isAlive(w) && eligible(w));
 
     for (const w of state.slots.concat(state.minimized)) {
-        if (slots.indexOf(w) === -1 && minimized.indexOf(w) === -1) {
+        if (
+            slots.indexOf(w) === -1 &&
+            minimized.indexOf(w) === -1 &&
+            !isAlive(w)
+        ) {
             connectedWindowIds.delete(windowId(w));
         }
     }
@@ -1184,6 +1188,10 @@ function onActivitiesChanged(w) {
             return;
         }
         const state = findStateContaining(w);
+        if (state && state.applying) {
+            scheduleApply(state);
+            return;
+        }
         if (!windowOnActivity(w)) {
             if (state) {
                 detachFromState(state, w);
