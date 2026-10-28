@@ -1,10 +1,14 @@
+# Build the KWin runtime bundle from src/.
+build:
+    node tools/build.js
+
 # Install Kwarter into the user's KWin scripts directory.
-install:
+install: build
     kpackagetool6 --type=KWin/Script -i .
     just reconfigure
 
 # Upgrade the installed Kwarter package.
-upgrade:
+upgrade: build
     kpackagetool6 --type=KWin/Script -u .
     just reconfigure
 
