@@ -158,6 +158,7 @@ const connectedWindowIds = new Set();
 const retriedOutput = new Set();
 const generatedIds = new WeakMap();
 let nextGeneratedId = 0;
+let activeDrag = null;
 
 function windowId(w) {
     if (!w) {
@@ -655,6 +656,96 @@ function registerAllShortcuts() {
     }
 }
 
+function onInteractiveMoveResizeStarted(w) {
+    try {
+        activeDrag = { window: w, resizing: Boolean(w.resize) };
+    } catch (e) {
+        print(`quarter-tiler: onInteractiveMoveResizeStarted failed: ${e}`);
+    }
+}
+
+function onInteractiveMoveResizeFinished(w) {
+    try {
+        const drag = activeDrag;
+        activeDrag = null;
+        const resizing = Boolean(drag && drag.window === w ? drag.resizing : false);
+        Qt.callLater(() => {
+            try {
+                handleDrop(w, resizing);
+            } catch (e) {
+                print(`quarter-tiler: deferred drop failed: ${e}`);
+            }
+        });
+    } catch (e) {
+        print(`quarter-tiler: onInteractiveMoveResizeFinished failed: ${e}`);
+    }
+}
+
+function windowsAt(pos) {
+    const found = workspace.windowAt(pos, -1);
+    if (Array.isArray(found)) {
+        return found;
+    }
+    return found ? [found] : [];
+}
+
+function handleDrop(w, resizing) {
+    try {
+        if (!isAlive(w)) {
+            return;
+        }
+
+        const source = findStateContaining(w);
+        if (!source || source.slots.indexOf(w) === -1) {
+            return;
+        }
+        if (w.fullScreen) {
+            return;
+        }
+
+        const pos = workspace.cursorPos;
+        const output = workspace.screenAt(pos) || w.output;
+        const destination = stateFor(output, desktopFor(w));
+
+        if (destination !== source) {
+            detachFromState(source, w);
+            addToState(destination, w);
+            scheduleApply(source);
+            scheduleApply(destination);
+            return;
+        }
+
+        if (resizing) {
+            scheduleApply(source);
+            return;
+        }
+
+        const windows = windowsAt(pos);
+        let target = null;
+        for (const candidate of windows) {
+            if (!candidate || candidate === w || !isAlive(candidate)) {
+                continue;
+            }
+            target = candidate;
+            break;
+        }
+
+        if (
+            target &&
+            !target.fullScreen &&
+            source.slots.indexOf(target) !== -1
+        ) {
+            const sourceIndex = source.slots.indexOf(w);
+            const targetIndex = source.slots.indexOf(target);
+            source.slots = swapSlots(source.slots, sourceIndex, targetIndex);
+        }
+
+        scheduleApply(source);
+    } catch (e) {
+        print(`quarter-tiler: handleDrop failed: ${e}`);
+    }
+}
+
 function connectSignal(signal, handler) {
     if (signal && typeof signal.connect === "function") {
         signal.connect(handler);
@@ -671,6 +762,12 @@ function connectWindowSignals(w) {
     connectSignal(w.minimizedChanged, () => onMinimizedChanged(w));
     connectSignal(w.fullScreenChanged, () => onFullScreenChanged(w));
     connectSignal(w.maximizedChanged, () => onMaximizedChanged(w));
+    connectSignal(w.interactiveMoveResizeStarted, () =>
+        onInteractiveMoveResizeStarted(w)
+    );
+    connectSignal(w.interactiveMoveResizeFinished, () =>
+        onInteractiveMoveResizeFinished(w)
+    );
 }
 
 function onWindowAdded(w) {
@@ -819,6 +916,9 @@ if (typeof module !== "undefined" && module.exports) {
         verifyState,
         applyState,
         swapDirection,
+        onInteractiveMoveResizeStarted,
+        onInteractiveMoveResizeFinished,
+        handleDrop,
         registerAllShortcuts,
         pruneState,
         isAlive,
