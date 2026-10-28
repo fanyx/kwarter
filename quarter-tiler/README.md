@@ -10,6 +10,7 @@ there is no settings page, no config file, and no build step.
 - KWin 6.x.
 - `kpackagetool6` and `kwriteconfig6` (part of Plasma).
 - `qdbus6` (part of Qt 6 tools) to reload KWin's configuration.
+- Node.js 18 or newer to run the automated tests. It is not needed at runtime.
 
 X11 sessions and Plasma 5 are not supported. Tile state is held in memory and
 does not survive a KWin restart or login.
@@ -22,6 +23,13 @@ From the repository root:
 kpackagetool6 --type=KWin/Script -i ./quarter-tiler
 kwriteconfig6 --file kwinrc --group Plugins --key quarter-tilerEnabled true
 qdbus6 org.kde.KWin /KWin reconfigure
+```
+
+If `qdbus6` is not installed, use `qdbus` or `dbus-send` instead:
+
+```bash
+qdbus org.kde.KWin /KWin reconfigure
+dbus-send --session --type=method_call --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure
 ```
 
 If the script is already installed and you want to replace it, use
@@ -175,21 +183,23 @@ window is not tiled until it leaves fullscreen.
   keyed per output and virtual desktop.
 - Sticky windows, panels, docks, tooltips, notifications, dialogs, popups,
   and other transient or special windows are never tiled or counted.
-- Windows smaller than their minimum size are clamped and may overlap the gap.
+- A slot rectangle smaller than a window's minimum size is clamped to the minimum, so the window may overlap the gap.
 - Enabling or re-enabling the script with more than four eligible windows
   minimizes the oldest windows during replay.
-- No automated integration tests: signal behavior is covered by the manual
-  matrix below plus pure-function tests.
+- Automated tests cover pure layout math, eligibility, and victim-selection
+  and blocking helpers. Window lifecycle and signal behavior are covered by
+  the manual matrix below.
 
 ## Tests
 
-The pure layout and eligibility functions are tested with Node's built-in test
-runner. No KWin session and no packages are required.
+The pure layout, eligibility, victim-selection, and runtime-source checks are
+tested with Node's built-in test runner (Node.js 18 or newer). No KWin session
+and no npm packages are required.
 
 From the repository root:
 
 ```bash
-node --test quarter-tiler/tests/layout.test.js
+node --test quarter-tiler/tests/layout.test.js quarter-tiler/tests/runtime.test.js
 ```
 
 Optional syntax check:

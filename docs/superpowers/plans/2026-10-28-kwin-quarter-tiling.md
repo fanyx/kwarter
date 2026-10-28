@@ -45,12 +45,14 @@ quarter-tiler/
 │   └── code/
 │       └── main.js
 ├── tests/
-│   └── layout.test.js
+│   ├── layout.test.js
+│   └── runtime.test.js
 └── README.md
 ```
 
 - `main.js`: pure layout helpers, runtime state, signal wiring, shortcuts, drag handling, geometry application.
 - `tests/layout.test.js`: Node tests for pure helpers.
+- `tests/runtime.test.js`: Node tests for runtime source constraints (no global `Qt.`, uses `QTimer`).
 - `metadata.json`: KWin script package metadata.
 - `README.md`: install, shortcut setup, behavior, manual test matrix, limitations.
 
@@ -67,7 +69,7 @@ quarter-tiler/
 - Produces:
   - `GAP: number` = 6
   - `MAX_WINDOWS: number` = 4
-  - `slotRects(count: number, area: Rect, gap: number) -> Rect[]`
+  - `slotRects(count: number, area: Rect, gap?: number) -> Rect[]` (defaults to `GAP`)
   - `directionalTarget(rects: Rect[], activeIndex: number, dx: number, dy: number) -> number`
   - `chooseVictimIndex(lruIds: string[], blockedIds: string[]) -> number`
   - `swapSlots(slots: any[], a: number, b: number) -> any[]`
@@ -261,8 +263,8 @@ Required behavior:
 
 - `slotRects(1, area)` returns the full area with no inset.
 - `slotRects(2|3|4, area, gap)` uses the fractional slots from the spec: 2 = left/right halves; 3 = left half, right top, right bottom; 4 = TL, TR, BR, BL.
-- Convert fractions to pixels with `Math.round`, add `area.x`/`area.y`, then inset every side by `gap / 2`. For an odd gap, use `Math.round(gap / 2)` for the inset.
-- `directionalTarget` scores candidates as `abs(primary delta) + 2 * abs(lateral delta)`, requires the center to lie strictly in the requested direction, and breaks ties by lower index. Return `-1` when `dx` and `dy` are both zero, when the active index is invalid, or when no candidate exists.
+- Convert fractions to pixels with `Math.round` before adding `area.x`/`area.y`, then inset every side by `gap / 2`. For an odd gap, use `Math.round(gap / 2)` for the inset.
+- `directionalTarget` scores candidates as `abs(primary delta) + 2 * abs(lateral delta)`, requires the center to lie strictly in the requested direction, and breaks ties by lower index. Return `-1` when `dx` and `dy` are both zero, when `activeIndex` is not an integer or is out of range, or when no candidate exists.
 - `chooseVictimIndex` returns the first unblocked index; if all are blocked, returns `0`; if `lruIds` is empty, returns `-1`.
 - `swapSlots` returns a copy and does not mutate the input.
 - `fitToMinSize` widens/widens height to `minSize`, keeping `x`/`y`.
@@ -346,9 +348,9 @@ git commit -m "feat(tiler): add layout math and eligibility helpers"
 Runtime requirements:
 
 - `main()` connects `workspace.windowAdded`, `workspace.windowRemoved`, `workspace.windowActivated`, then calls `replayExistingWindows()`.
-- `onWindowAdded` defers through `Qt.callLater` and then calls `addWindow`.
+- `onWindowAdded` defers through `defer()` (one-shot global `QTimer`) and then calls `addWindow`.
 - `connectWindowSignals` deduplicates by `windowId`. Connect `minimizedChanged`, `fullScreenChanged`, and `maximizedChanged`. Later tasks append drag and desktop/output signals.
-- `addWindow` rejects ineligible, already-tracked, fullscreen, wrong-activity, and output-less windows. Resolve output with `w.output || workspace.activeScreen`. Retry once with `Qt.callLater` when output is null.
+- `addWindow` rejects ineligible, already-tracked, fullscreen, wrong-activity, and output-less windows. Resolve output with `w.output || workspace.activeScreen`. Retry once with `defer()` when output is null.
 - `addToState` appends when below four. At four, use `chooseVictim`, remove the victim from `slots`/`lru`, set `victim.minimized = true`, push it to `minimized`, and insert the new window at the victim index.
 - `chooseVictim` blocks a candidate when a visible non-minimized window resolves to it as a transient parent, and blocks fullscreen candidates. Build IDs with `windowId` and call `chooseVictimIndex`. A window that resolves to itself must not block itself.
 - `touch` removes and appends in `lru`.
@@ -358,7 +360,7 @@ Runtime requirements:
 - Manual restore: remove from `minimized`, call `addToState`, schedule an apply.
 - `onFullScreenChanged` re-adds an eligible window when leaving fullscreen and schedules an apply for slotted fullscreen toggles.
 - `onMaximizedChanged` schedules an apply unless `state.applying` is true. This reverts manual maximize/unmaximize.
-- `scheduleApply` coalesces with `applyScheduled` and `Qt.callLater`.
+- `scheduleApply` coalesces with `applyScheduled` and `defer()`.
 - `applyState` prunes, checks `state.output`/`state.desktop` membership, computes the area, uses real maximize for one window, otherwise unmaximizes all slots and writes `frameGeometry`. Fullscreen windows are skipped. Store target rectangles and verify once on the next tick with `rectsClose` tolerance 1.
 - `removeWindow` finds state by membership, records whether the window was visible and its index, detaches it, restores the most recent minimized window into the freed index when the closed window was visible and the stack is non-empty, sets `workspace.activeWindow`, and schedules an apply. Closing a minimized window does not restore another.
 - `pruneState` removes deleted/ineligible windows and keeps `lru` limited to windows in `slots`. Delete a state only when `slots` and `minimized` are both empty.
@@ -466,7 +468,7 @@ Requirements:
 
 - `connectWindowSignals` also connects `interactiveMoveResizeStarted` and `interactiveMoveResizeFinished`.
 - On start, store `{window: w, resizing: !!w.resize}` in `activeDrag`.
-- On finish, clear `activeDrag` and defer `handleDrop` with `Qt.callLater`.
+- On finish, clear `activeDrag`, set a `pendingDrop` marker, and defer `handleDrop` with `defer()`.
 - `handleDrop` returns when the window is not in a state or is fullscreen.
 - Resolve `pos = workspace.cursorPos`, destination output with `workspace.screenAt(pos) || w.output`, and desktop with `desktopFor(w)`.
 - When the destination state differs from the source: detach the window without restoring, add it to the destination with `addToState`, and schedule applies for both states.

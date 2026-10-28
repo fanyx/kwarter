@@ -6,6 +6,7 @@ const {
     slotRects,
     directionalTarget,
     chooseVictimIndex,
+    chooseVictim,
     swapSlots,
     fitToMinSize,
     rectsClose,
@@ -105,6 +106,74 @@ test("victim selection skips blocked windows and falls back to the first", () =>
     assert.equal(chooseVictimIndex(["a", "b", "c"], ["a", "b"]), 2);
     assert.equal(chooseVictimIndex(["a", "b", "c"], ["a", "b", "c"]), 0);
     assert.equal(chooseVictimIndex([], []), -1);
+});
+
+test("chooseVictim blocks parents with visible children and handles fallbacks", () => {
+    const output = { name: "DP-1" };
+    const desktop = { id: "desk-a" };
+    const otherDesktop = { id: "desk-b" };
+    const previous = global.workspace;
+
+    const parent = win({
+        internalId: "parent",
+        output: output,
+        desktops: [desktop],
+        activities: ["act-a"],
+        fullScreen: false,
+    });
+    const other = win({
+        internalId: "other",
+        output: output,
+        desktops: [desktop],
+        activities: ["act-a"],
+        fullScreen: false,
+    });
+    const fullscreenParent = win({
+        internalId: "full-parent",
+        output: output,
+        desktops: [desktop],
+        activities: ["act-a"],
+        fullScreen: true,
+    });
+    function child(id, target, childDesktop = desktop) {
+        return {
+            internalId: id,
+            transientFor: target,
+            deleted: false,
+            minimized: false,
+            output: output,
+            desktops: [childDesktop],
+            activities: ["act-a"],
+        };
+    }
+
+    global.workspace = {
+        screens: [output],
+        activeScreen: output,
+        currentDesktop: desktop,
+        currentActivity: "act-a",
+        windowList: () => [],
+    };
+
+    try {
+        const parentChild = child("parent-child", parent);
+        const otherChild = child("other-child", other);
+        const remoteChild = child("remote-child", parent, otherDesktop);
+
+        global.workspace.windowList = () => [parent, other, parentChild];
+        assert.equal(chooseVictim({ lru: [parent, other] }), other);
+
+        global.workspace.windowList = () => [parent, other, parentChild, otherChild];
+        assert.equal(chooseVictim({ lru: [parent, other] }), parent);
+
+        global.workspace.windowList = () => [fullscreenParent, other];
+        assert.equal(chooseVictim({ lru: [fullscreenParent, other] }), other);
+
+        global.workspace.windowList = () => [parent, other, remoteChild];
+        assert.equal(chooseVictim({ lru: [parent, other] }), parent);
+    } finally {
+        global.workspace = previous;
+    }
 });
 
 test("swapSlots returns a new array with two entries exchanged", () => {

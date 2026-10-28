@@ -1,6 +1,24 @@
 const GAP = 6;
 const MAX_WINDOWS = 4;
 
+var pendingTimers = [];
+function defer(fn) {
+    var timer = new QTimer();
+    pendingTimers.push(timer);
+    timer.singleShot = true;
+    timer.interval = 0;
+    timer.timeout.connect(function () {
+        var index = pendingTimers.indexOf(timer);
+        if (index >= 0) pendingTimers.splice(index, 1);
+        fn();
+    });
+    timer.start(0);
+}
+
+function plainRect(rect) {
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+}
+
 const SLOT_FRACTIONS = {
     2: [
         [0, 0, 0.5, 1],
@@ -19,7 +37,7 @@ const SLOT_FRACTIONS = {
     ],
 };
 
-function slotRects(count, area, gap) {
+function slotRects(count, area, gap = GAP) {
     if (count === 1) {
         return [{ x: area.x, y: area.y, width: area.width, height: area.height }];
     }
@@ -31,8 +49,8 @@ function slotRects(count, area, gap) {
 
     const inset = Math.round(gap / 2);
     return fractions.map(([fx, fy, fw, fh]) => ({
-        x: Math.round(area.x + fx * area.width) + inset,
-        y: Math.round(area.y + fy * area.height) + inset,
+        x: area.x + Math.round(fx * area.width) + inset,
+        y: area.y + Math.round(fy * area.height) + inset,
         width: Math.round(fw * area.width) - 2 * inset,
         height: Math.round(fh * area.height) - 2 * inset,
     }));
@@ -45,7 +63,7 @@ function directionalTarget(rects, activeIndex, dx, dy) {
     if (dx === 0 && dy === 0) {
         return -1;
     }
-    if (activeIndex < 0 || activeIndex >= rects.length) {
+    if (!Number.isInteger(activeIndex) || activeIndex < 0 || activeIndex >= rects.length) {
         return -1;
     }
 
@@ -156,10 +174,14 @@ function resolveRoot(w) {
 const states = {};
 const connectedWindowIds = new Set();
 const connectedOutputs = new Set();
+const connectedDockIds = new Set();
+const warnedSignals = new Set();
+const warnedTileIds = new Set();
 const retriedOutput = new Set();
 const generatedIds = new WeakMap();
 let nextGeneratedId = 0;
 let activeDrag = null;
+let pendingDrop = null;
 
 function windowId(w) {
     if (!w) {
@@ -287,6 +309,15 @@ function touch(state, w) {
     state.lru.push(w);
 }
 
+function sameTilingContext(a, b) {
+    return (
+        resolveOutput(a) === resolveOutput(b) &&
+        desktopFor(a) === desktopFor(b) &&
+        windowOnActivity(a) &&
+        windowOnActivity(b)
+    );
+}
+
 function chooseVictim(state) {
     const candidates = state.lru.filter(isAlive);
     if (candidates.length === 0) {
@@ -313,10 +344,14 @@ function chooseVictim(state) {
             if (windowId(other) === candidateId) {
                 continue;
             }
-            if (resolveRoot(other) === candidate) {
-                hasVisibleChild = true;
-                break;
+            if (resolveRoot(other) !== candidate) {
+                continue;
             }
+            if (!sameTilingContext(other, candidate)) {
+                continue;
+            }
+            hasVisibleChild = true;
+            break;
         }
         if (hasVisibleChild) {
             blocked.push(candidateId);
@@ -334,12 +369,14 @@ function addToState(state, w) {
         return;
     }
 
-    const victim = chooseVictim(state) || state.slots[0];
+    let victim = chooseVictim(state);
+    if (!victim) {
+        victim = state.slots[0];
+    }
     const index = state.slots.indexOf(victim);
 
     if (!victim || index === -1) {
-        state.slots.push(w);
-        touch(state, w);
+        scheduleApply(state);
         return;
     }
 
@@ -349,6 +386,31 @@ function addToState(state, w) {
 
     state.slots.splice(index, 0, w);
     touch(state, w);
+}
+
+function detachNativeTile(w) {
+    try {
+        if (w.tile === null || w.tile === undefined) {
+            return true;
+        }
+        w.tile = null;
+        if (w.tile !== null && w.tile !== undefined) {
+            const id = windowId(w);
+            if (!warnedTileIds.has(id)) {
+                warnedTileIds.add(id);
+                print(`quarter-tiler: native tile still attached for ${id}`);
+            }
+            return false;
+        }
+        return true;
+    } catch (e) {
+        const id = windowId(w);
+        if (!warnedTileIds.has(id)) {
+            warnedTileIds.add(id);
+            print(`quarter-tiler: failed to detach native tile for ${id}: ${e}`);
+        }
+        return false;
+    }
 }
 
 function addWindow(w) {
@@ -376,21 +438,12 @@ function addWindow(w) {
         if (!output) {
             if (!retriedOutput.has(w)) {
                 retriedOutput.add(w);
-                Qt.callLater(() => addWindow(w));
+                defer(() => addWindow(w));
             }
             return;
         }
 
-        try {
-            if (w.tile !== null && w.tile !== undefined) {
-                w.tile = null;
-            }
-            if (w.tile !== null && w.tile !== undefined) {
-                print(`quarter-tiler: native tile still attached for ${windowId(w)}`);
-                return;
-            }
-        } catch (e) {
-            print(`quarter-tiler: failed to detach native tile for ${windowId(w)}: ${e}`);
+        if (!detachNativeTile(w)) {
             return;
         }
 
@@ -415,6 +468,7 @@ function removeWindow(w) {
     try {
         retriedOutput.delete(w);
         connectedWindowIds.delete(windowId(w));
+        connectedDockIds.delete(windowId(w));
 
         const state = findStateContaining(w);
         if (!state) {
@@ -453,9 +507,18 @@ function removeWindow(w) {
 }
 
 function pruneState(state) {
-    state.slots = state.slots.filter((w) => isAlive(w) && eligible(w));
+    const slots = state.slots.filter((w) => isAlive(w) && eligible(w));
+    const minimized = state.minimized.filter((w) => isAlive(w) && eligible(w));
+
+    for (const w of state.slots.concat(state.minimized)) {
+        if (slots.indexOf(w) === -1 && minimized.indexOf(w) === -1) {
+            connectedWindowIds.delete(windowId(w));
+        }
+    }
+
+    state.slots = slots;
     state.lru = state.lru.filter((w) => state.slots.indexOf(w) !== -1);
-    state.minimized = state.minimized.filter((w) => isAlive(w) && eligible(w));
+    state.minimized = minimized;
 
     if (state.slots.length === 0 && state.minimized.length === 0) {
         delete states[state.key];
@@ -467,7 +530,7 @@ function scheduleApply(state) {
         return;
     }
     state.applyScheduled = true;
-    Qt.callLater(() => {
+    defer(() => {
         state.applyScheduled = false;
         applyState(state);
     });
@@ -512,7 +575,7 @@ function verifyState(state, targets) {
         return;
     }
 
-    Qt.callLater(() => {
+    defer(() => {
         for (const target of targets) {
             try {
                 const w = target.w;
@@ -523,8 +586,7 @@ function verifyState(state, targets) {
                     continue;
                 }
                 if (!rectsClose(w.frameGeometry, target.rect, 1)) {
-                    const rect = target.rect;
-                    w.frameGeometry = Qt.rect(rect.x, rect.y, rect.width, rect.height);
+                    w.frameGeometry = plainRect(target.rect);
                 }
             } catch (e) {
                 print(`quarter-tiler: verifyState failed: ${e}`);
@@ -548,7 +610,8 @@ function applyState(state) {
     try {
         pruneState(state);
 
-        const n = state.slots.length;
+        const slots = state.slots.slice();
+        const n = slots.length;
         if (n === 0) {
             if (state.minimized.length === 0) {
                 delete states[state.key];
@@ -563,12 +626,18 @@ function applyState(state) {
         }
 
         if (n === 1) {
-            setMaximizeIfNeeded(state.slots[0], true, true);
+            const only = slots[0];
+            if (only && detachNativeTile(only)) {
+                setMaximizeIfNeeded(only, true, true);
+            }
             return;
         }
 
-        for (const w of state.slots) {
-            if (w.fullScreen) {
+        for (const w of slots) {
+            if (!w || w.fullScreen) {
+                continue;
+            }
+            if (!detachNativeTile(w)) {
                 continue;
             }
             setMaximizeIfNeeded(w, false, false);
@@ -578,13 +647,16 @@ function applyState(state) {
         const targets = [];
 
         for (let i = 0; i < n; i++) {
-            const w = state.slots[i];
+            const w = slots[i];
             if (!w || w.fullScreen) {
+                continue;
+            }
+            if (!detachNativeTile(w)) {
                 continue;
             }
             const minSize = w.minSize || { width: 0, height: 0 };
             const rect = fitToMinSize(rects[i], minSize);
-            w.frameGeometry = Qt.rect(rect.x, rect.y, rect.width, rect.height);
+            w.frameGeometry = plainRect(rect);
             targets.push({ w: w, rect: rect });
         }
 
@@ -644,40 +716,40 @@ function swapDirection(dx, dy) {
 }
 
 function registerShortcutLogged(title, text, sequence, callback) {
-    if (!registerShortcut(title, text, sequence, callback)) {
-        print(`quarter-tiler: failed to register shortcut "${title}" (${sequence})`);
+    try {
+        if (!registerShortcut(title, text, sequence, callback)) {
+            print(`quarter-tiler: failed to register shortcut "${title}" (${sequence})`);
+        }
+    } catch (e) {
+        print(`quarter-tiler: failed to register shortcut "${title}" (${sequence}): ${e}`);
     }
 }
 
 function registerAllShortcuts() {
-    try {
-        registerShortcutLogged(
-            "Quarter Tiler: Swap Left",
-            "Swap window left",
-            "Meta+Left",
-            () => swapDirection(-1, 0)
-        );
-        registerShortcutLogged(
-            "Quarter Tiler: Swap Right",
-            "Swap window right",
-            "Meta+Right",
-            () => swapDirection(1, 0)
-        );
-        registerShortcutLogged(
-            "Quarter Tiler: Swap Up",
-            "Swap window up",
-            "Meta+Up",
-            () => swapDirection(0, -1)
-        );
-        registerShortcutLogged(
-            "Quarter Tiler: Swap Down",
-            "Swap window down",
-            "Meta+Down",
-            () => swapDirection(0, 1)
-        );
-    } catch (e) {
-        print(`quarter-tiler: registerAllShortcuts failed: ${e}`);
-    }
+    registerShortcutLogged(
+        "Quarter Tiler: Swap Left",
+        "Swap window left",
+        "Meta+Left",
+        () => swapDirection(-1, 0)
+    );
+    registerShortcutLogged(
+        "Quarter Tiler: Swap Right",
+        "Swap window right",
+        "Meta+Right",
+        () => swapDirection(1, 0)
+    );
+    registerShortcutLogged(
+        "Quarter Tiler: Swap Up",
+        "Swap window up",
+        "Meta+Up",
+        () => swapDirection(0, -1)
+    );
+    registerShortcutLogged(
+        "Quarter Tiler: Swap Down",
+        "Swap window down",
+        "Meta+Down",
+        () => swapDirection(0, 1)
+    );
 }
 
 function dragIsResize(w) {
@@ -709,11 +781,16 @@ function onInteractiveMoveResizeFinished(w) {
         }
         activeDrag = null;
         const resizing = Boolean(drag && drag.window === w ? drag.resizing : false);
-        Qt.callLater(() => {
+        pendingDrop = { window: w, resizing: resizing };
+        defer(() => {
             try {
                 handleDrop(w, resizing);
             } catch (e) {
                 print(`quarter-tiler: deferred drop failed: ${e}`);
+            } finally {
+                if (pendingDrop && pendingDrop.window === w) {
+                    pendingDrop = null;
+                }
             }
         });
     } catch (e) {
@@ -753,6 +830,11 @@ function handleDrop(w, resizing) {
             return;
         }
 
+        if (resizing) {
+            scheduleApply(source);
+            return;
+        }
+
         const pos = workspace.cursorPos;
         const output = workspace.screenAt(pos) || w.output;
         const destination = stateFor(output, desktopFor(w));
@@ -762,11 +844,6 @@ function handleDrop(w, resizing) {
             addToState(destination, w);
             scheduleApply(source);
             scheduleApply(destination);
-            return;
-        }
-
-        if (resizing) {
-            scheduleApply(source);
             return;
         }
 
@@ -796,9 +873,62 @@ function handleDrop(w, resizing) {
     }
 }
 
-function connectSignal(signal, handler) {
+function connectSignal(signal, handler, name) {
     if (signal && typeof signal.connect === "function") {
         signal.connect(handler);
+        return true;
+    }
+    const label = name || "signal";
+    if (!warnedSignals.has(label)) {
+        warnedSignals.add(label);
+        print(`quarter-tiler: missing optional signal or feature: ${label}`);
+    }
+    return false;
+}
+
+function isDockWindow(w) {
+    return Boolean(w && !w.deleted && (w.dock || w.specialWindow));
+}
+
+function connectDockSignals(w) {
+    const id = windowId(w);
+    if (connectedDockIds.has(id)) {
+        return;
+    }
+    connectedDockIds.add(id);
+    connectSignal(
+        w.frameGeometryChanged,
+        () => onDockGeometryChanged(w),
+        "window.frameGeometryChanged"
+    );
+}
+
+function onDockGeometryChanged(w) {
+    try {
+        const output = resolveOutput(w);
+        if (!output) {
+            return;
+        }
+        for (const key of Object.keys(states)) {
+            const state = states[key];
+            if (state.output === output) {
+                scheduleApply(state);
+            }
+        }
+    } catch (e) {
+        print(`quarter-tiler: onDockGeometryChanged failed: ${e}`);
+    }
+}
+
+function connectDockWindows() {
+    try {
+        for (const w of workspace.windowList()) {
+            if (isDockWindow(w)) {
+                connectDockSignals(w);
+            }
+        }
+    } catch (e) {
+        print(`quarter-tiler: connectDockWindows failed: ${e}`);
     }
 }
 
@@ -807,7 +937,11 @@ function connectOutputSignals(output) {
         return;
     }
     connectedOutputs.add(output);
-    connectSignal(output.geometryChanged, () => onOutputGeometryChanged(output));
+    connectSignal(
+        output.geometryChanged,
+        () => onOutputGeometryChanged(output),
+        "output.geometryChanged"
+    );
 }
 
 function moveWindowBetweenStates(w, oldState) {
@@ -939,9 +1073,27 @@ function onOutputGeometryChanged(output) {
     }
 }
 
+function isDragOwned(w) {
+    if (activeDrag && activeDrag.window === w) {
+        return true;
+    }
+    if (pendingDrop && pendingDrop.window === w) {
+        return true;
+    }
+    return false;
+}
+
 function onDesktopsChanged(w) {
     try {
-        moveWindowBetweenStates(w, findStateContaining(w));
+        if (isDragOwned(w)) {
+            return;
+        }
+        const state = findStateContaining(w);
+        if (state && state.applying) {
+            scheduleApply(state);
+            return;
+        }
+        moveWindowBetweenStates(w, state);
     } catch (e) {
         print(`quarter-tiler: onDesktopsChanged failed: ${e}`);
     }
@@ -949,7 +1101,15 @@ function onDesktopsChanged(w) {
 
 function onOutputChanged(w) {
     try {
-        moveWindowBetweenStates(w, findStateContaining(w));
+        if (isDragOwned(w)) {
+            return;
+        }
+        const state = findStateContaining(w);
+        if (state && state.applying) {
+            scheduleApply(state);
+            return;
+        }
+        moveWindowBetweenStates(w, state);
     } catch (e) {
         print(`quarter-tiler: onOutputChanged failed: ${e}`);
     }
@@ -962,22 +1122,31 @@ function connectWindowSignals(w) {
     }
     connectedWindowIds.add(id);
 
-    connectSignal(w.minimizedChanged, () => onMinimizedChanged(w));
-    connectSignal(w.fullScreenChanged, () => onFullScreenChanged(w));
-    connectSignal(w.maximizedChanged, () => onMaximizedChanged(w));
-    connectSignal(w.interactiveMoveResizeStarted, () =>
-        onInteractiveMoveResizeStarted(w)
+    connectSignal(w.minimizedChanged, () => onMinimizedChanged(w), "window.minimizedChanged");
+    connectSignal(w.fullScreenChanged, () => onFullScreenChanged(w), "window.fullScreenChanged");
+    connectSignal(w.maximizedChanged, () => onMaximizedChanged(w), "window.maximizedChanged");
+    connectSignal(
+        w.interactiveMoveResizeStarted,
+        () => onInteractiveMoveResizeStarted(w),
+        "window.interactiveMoveResizeStarted"
     );
-    connectSignal(w.interactiveMoveResizeFinished, () =>
-        onInteractiveMoveResizeFinished(w)
+    connectSignal(
+        w.interactiveMoveResizeFinished,
+        () => onInteractiveMoveResizeFinished(w),
+        "window.interactiveMoveResizeFinished"
     );
-    connectSignal(w.desktopsChanged, () => onDesktopsChanged(w));
-    connectSignal(w.outputChanged, () => onOutputChanged(w));
+    connectSignal(w.desktopsChanged, () => onDesktopsChanged(w), "window.desktopsChanged");
+    connectSignal(w.outputChanged, () => onOutputChanged(w), "window.outputChanged");
+    connectSignal(w.activitiesChanged, () => onActivitiesChanged(w), "window.activitiesChanged");
 }
 
 function onWindowAdded(w) {
     try {
-        Qt.callLater(() => {
+        if (isDockWindow(w)) {
+            connectDockSignals(w);
+            return;
+        }
+        defer(() => {
             try {
                 addWindow(w);
             } catch (e) {
@@ -1009,10 +1178,39 @@ function onWindowActivated(w) {
     }
 }
 
+function onActivitiesChanged(w) {
+    try {
+        if (isDragOwned(w)) {
+            return;
+        }
+        const state = findStateContaining(w);
+        if (!windowOnActivity(w)) {
+            if (state) {
+                detachFromState(state, w);
+                scheduleApply(state);
+            }
+            return;
+        }
+        if (!state && eligible(w)) {
+            addWindow(w);
+            return;
+        }
+        if (state) {
+            scheduleApply(state);
+        }
+    } catch (e) {
+        print(`quarter-tiler: onActivitiesChanged failed: ${e}`);
+    }
+}
+
 function onMinimizedChanged(w) {
     try {
         const state = findStateContaining(w);
         if (!state) {
+            return;
+        }
+        if (state.applying) {
+            scheduleApply(state);
             return;
         }
 
@@ -1042,6 +1240,10 @@ function onMinimizedChanged(w) {
 function onFullScreenChanged(w) {
     try {
         const state = findStateContaining(w);
+        if (state && state.applying) {
+            scheduleApply(state);
+            return;
+        }
 
         if (state && state.slots.indexOf(w) !== -1) {
             scheduleApply(state);
@@ -1088,12 +1290,21 @@ function main() {
         workspace.windowAdded.connect(onWindowAdded);
         workspace.windowRemoved.connect(onWindowRemoved);
         workspace.windowActivated.connect(onWindowActivated);
-        connectSignal(workspace.currentDesktopChanged, onCurrentDesktopChanged);
-        connectSignal(workspace.currentActivityChanged, onCurrentActivityChanged);
-        connectSignal(workspace.screensChanged, onScreensChanged);
+        connectSignal(
+            workspace.currentDesktopChanged,
+            onCurrentDesktopChanged,
+            "workspace.currentDesktopChanged"
+        );
+        connectSignal(
+            workspace.currentActivityChanged,
+            onCurrentActivityChanged,
+            "workspace.currentActivityChanged"
+        );
+        connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
         for (const output of workspace.screens) {
             connectOutputSignals(output);
         }
+        connectDockWindows();
         registerAllShortcuts();
         replayExistingWindows();
     } catch (e) {
@@ -1108,42 +1319,13 @@ if (typeof module !== "undefined" && module.exports) {
         slotRects,
         directionalTarget,
         chooseVictimIndex,
+        chooseVictim,
         swapSlots,
         fitToMinSize,
         rectsClose,
         eligible,
         stateKey,
         resolveRoot,
-        states,
-        stateFor,
-        findStateContaining,
-        detachFromState,
-        touch,
-        chooseVictim,
-        addToState,
-        addWindow,
-        removeWindow,
-        scheduleApply,
-        verifyState,
-        applyState,
-        swapDirection,
-        onInteractiveMoveResizeStarted,
-        onInteractiveMoveResizeFinished,
-        handleDrop,
-        registerAllShortcuts,
-        pruneState,
-        isAlive,
-        windowId,
-        desktopFor,
-        windowOnActivity,
-        connectOutputSignals,
-        onCurrentDesktopChanged,
-        onCurrentActivityChanged,
-        onScreensChanged,
-        onOutputGeometryChanged,
-        onDesktopsChanged,
-        onOutputChanged,
-        replayExistingWindows,
         main,
     };
 } else {

@@ -105,7 +105,8 @@ The script targets KWin 6.x on Wayland. The following API surface is assumed to 
 - `Window.minimizedChanged`, `Window.fullScreenChanged`, `Window.desktopsChanged`, `Window.outputChanged`
 - `Window.interactiveMoveResizeStarted`, `Window.interactiveMoveResizeFinished`
 - `Output.name`, `Output.geometryChanged`
-- `Qt.callLater` and `Qt.rect`
+- Global `QTimer` (constructible KWin `ScriptTimer`) for one-shot deferral. KWin 6 JavaScript scripts do not expose a global `Qt`, so `Qt.callLater` is unavailable.
+- Plain `{x, y, width, height}` objects assigned to `Window.frameGeometry`; KWin's `QJSValue`-to-`QRectF` converter reads those properties. `Qt.rect` is unavailable.
 
 If a property or signal is missing on the installed KWin version, the script must fail soft: log the issue with `print()` and leave the affected window untiled rather than throwing out of a signal handler.
 
@@ -237,7 +238,7 @@ For count 3, the second opened window is in slot 1 (right top) and the third is 
 
 `GAP = 6` logical pixels. Each slot rectangle is inset by `GAP / 2 = 3` pixels on all four sides. Adjacent windows therefore have 6 pixels between them, and the screen edge has a 3-pixel margin. The gap is not configurable and does not apply to the maximized single-window state.
 
-Round final pixel values with `Math.round`. Use `Qt.rect(x, y, width, height)` for the write.
+Round each fractional pixel value with `Math.round` before adding the work-area origin. Assign a plain object `{x, y, width, height}` to `Window.frameGeometry`; KWin's `QJSValue`-to-`QRectF` converter reads those properties.
 
 ### 6.4 Applying a layout
 
@@ -274,7 +275,7 @@ apply(state):
 
 `verifyOnce` runs on the next event-loop tick. It compares each window's `frameGeometry` with the target rectangle. If the difference is larger than one pixel on any side, it writes the target one more time and does not schedule another verification. This handles KWin restoring a window's pre-maximize geometry after `setMaximize(false, false)`.
 
-Applying geometry must not trigger the script's own layout handlers. The `applying` guard covers writes and signal handlers that can run synchronously. `Qt.callLater` coalesces repeated apply requests for the same state.
+Applying geometry must not trigger the script's own layout handlers. The `applying` guard covers writes and signal handlers that can run synchronously. A `defer()` helper backed by a one-shot global `QTimer` coalesces repeated apply requests for the same state.
 
 If a target rectangle is smaller than a window's `minSize`, use the minimum size and anchor the window at the rectangle's top-left corner. The window may overlap the gap, but it must not be forced below its minimum.
 
@@ -303,13 +304,13 @@ w.managed &&
 
 This excludes dialogs, transient popups, utility windows, panels, menus, tooltips, notifications, sticky windows, and special windows. Windows with a parent are excluded through `transient`, `dialog`, and `popupWindow` checks.
 
-If an adopted window has a non-null `w.tile`, the script attempts `w.tile = null` to detach it from KWin's native tiling. If that fails, the window is left untiled and the failure is logged.
+If an adopted window has a non-null `w.tile`, the script attempts `w.tile = null` to detach it from KWin's native tiling. If that fails, the window is left untiled and the failure is logged once per window. The apply path re-checks and clears `w.tile` before every geometry write and skips that window if detach fails.
 
 A window that is already minimized when it first appears is not given a slot. It is pushed onto the restore stack and can join the layout when restored.
 
 ### 7.2 Adding a window
 
-`windowAdded` is deferred with `Qt.callLater` so KWin has assigned the window's output and desktop.
+`windowAdded` is deferred with `defer()` so KWin has assigned the window's output and desktop.
 
 ```
 addWindow(w):
@@ -459,7 +460,7 @@ Each adopted window gets `interactiveMoveResizeStarted` and `interactiveMoveResi
 
 On start, record whether the interaction is a move or a resize. The script reads `w.move` and `w.resize` during the interaction to distinguish the two. A resize always ends in a snap back.
 
-On finish, defer one tick with `Qt.callLater` so KWin has completed its own move handling, then:
+On finish, defer one tick with `defer()` so KWin has completed its own move handling, then:
 
 1. If the window is not in a slot, return.
 2. If the window is fullscreen, return.
@@ -548,7 +549,7 @@ When a parent is chosen as an LRU victim, the victim selector skips it if it has
 - **Close of a minimized window:** remove from the restore stack; do not restore another.
 - **Restore stack with windows from an output that disappeared:** prune dead windows during apply.
 - **Duplicate adoption:** `addWindow` checks all states before inserting.
-- **Reentrancy:** `applying` guard plus `Qt.callLater` coalescing. Geometry writes never recursively schedule unbounded applies.
+- **Reentrancy:** `applying` guard plus `defer()` coalescing. State-mutating signal handlers that fire during an apply schedule a follow-up apply instead of mutating slots, and the apply loop iterates a snapshot of `slots`. Geometry writes never recursively schedule unbounded applies.
 - **Signal handler exception:** catch, log with `print()`, and continue. A single bad window must not disable the whole script.
 - **Missing API:** feature-detect optional signals and properties at startup; log a single warning and disable the affected feature rather than throwing.
 
@@ -556,7 +557,7 @@ When a parent is chosen as an LRU victim, the victim selector skips it if it has
 
 ### 12.1 Automated pure-function tests
 
-`tests/layout.test.js` uses Node's built-in `node:test` and `node:assert`. It imports `contents/code/main.js` through the `module.exports` guard; importing the file must not execute `main()` under Node.
+`tests/layout.test.js` and `tests/runtime.test.js` use Node's built-in `node:test` and `node:assert`. The layout tests import `contents/code/main.js` through the `module.exports` guard; importing the file must not execute `main()` under Node. The runtime test reads the source text and asserts that it contains no global `Qt.` usage and uses `new QTimer()` for deferral.
 
 Coverage:
 
@@ -565,13 +566,14 @@ Coverage:
 - Slot order: n = 3 gives left, right top, right bottom; n = 4 gives top left, top right, bottom right, bottom left.
 - Directional target selection for 2, 3, and 4 windows, including tie-breaks and no-target cases.
 - Swap index calculation.
-- LRU victim selection, including skipping parents with visible dialogs and fallback when all are blocked.
+- LRU victim selection, including skipping parents with visible dialogs, same-output/desktop/activity blocking, and fallback when all are blocked.
 - Clamp-to-minimum-size behaviour.
+- Runtime source contains no `Qt.` global and uses a constructible `QTimer`.
 
 Run with:
 
 ```bash
-node --test tests/layout.test.js
+node --test tests/layout.test.js tests/runtime.test.js
 ```
 
 No KWin process or test framework is required for these tests.

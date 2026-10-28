@@ -1,0 +1,20 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const MAIN = path.join(__dirname, "..", "contents", "code", "main.js");
+
+function source() {
+    return fs.readFileSync(MAIN, "utf8");
+}
+
+test("runtime never references the QML Qt global", () => {
+    assert.equal(/Qt\./.test(source()), false);
+});
+
+test("runtime defers with a constructible QTimer", () => {
+    const text = source();
+    assert.equal(/new QTimer\(\)/.test(text), true);
+    assert.equal(/callLater/.test(text), false);
+});
