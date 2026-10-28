@@ -3,12 +3,8 @@
 const { swapDirection } = require("./actions/swap");
 
 function registerShortcutLogged(title, text, sequence, callback) {
-    try {
-        if (!registerShortcut(title, text, sequence, callback)) {
-            print(`kwarter: failed to register shortcut "${title}" (${sequence})`);
-        }
-    } catch (e) {
-        print(`kwarter: failed to register shortcut "${title}" (${sequence}): ${e}`);
+    if (!registerShortcut(title, text, sequence, callback)) {
+        print(`kwarter: failed to register shortcut "${title}" (${sequence})`);
     }
 }
 

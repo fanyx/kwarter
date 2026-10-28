@@ -2,22 +2,10 @@
 
 const { warnedTileIds } = require("./registry");
 
-const generatedIds = new WeakMap();
-let nextGeneratedId = 0;
-
 function windowId(w) {
-    if (!w) {
-        return "";
-    }
-    if (w.internalId !== undefined && w.internalId !== null) {
-        return String(w.internalId);
-    }
-    let id = generatedIds.get(w);
-    if (id === undefined) {
-        id = `window-${nextGeneratedId++}`;
-        generatedIds.set(w, id);
-    }
-    return id;
+    return w && w.internalId !== undefined && w.internalId !== null
+        ? String(w.internalId)
+        : "";
 }
 
 function desktopFor(w) {
@@ -29,13 +17,9 @@ function desktopFor(w) {
 
 function currentDesktopFor(output) {
     if (output && typeof workspace.currentDesktopForScreen === "function") {
-        try {
-            const desktop = workspace.currentDesktopForScreen(output);
-            if (desktop) {
-                return desktop;
-            }
-        } catch (e) {
-            print(`kwarter: currentDesktopForScreen failed: ${e}`);
+        const desktop = workspace.currentDesktopForScreen(output);
+        if (desktop) {
+            return desktop;
         }
     }
     return workspace.currentDesktop;
@@ -74,15 +58,7 @@ function windowOnActivity(w) {
 }
 
 function contains(list, item) {
-    if (!list) {
-        return false;
-    }
-    for (let i = 0; i < list.length; i++) {
-        if (list[i] === item) {
-            return true;
-        }
-    }
-    return false;
+    return Boolean(list) && Array.prototype.includes.call(list, item);
 }
 
 function eligible(w) {
@@ -105,13 +81,7 @@ function stateKey(output, desktop) {
 
 function resolveRoot(w) {
     let current = w;
-    const visited = new Set();
     while (current && current.transientFor) {
-        const id = current.internalId !== undefined ? current.internalId : current;
-        if (visited.has(id)) {
-            break;
-        }
-        visited.add(id);
         current = current.transientFor;
     }
     return current;

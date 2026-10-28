@@ -28,6 +28,10 @@ const { isDragOwned } = require("../actions/drag");
 
 const outputHandlers = new Map();
 
+function trackedWindows(state) {
+    return Array.from(new Set(state.slots.concat(state.minimized, state.lru)));
+}
+
 function connectSignal(signal, handler, name) {
     if (signal && typeof signal.connect === "function") {
         signal.connect(handler);
@@ -59,31 +63,23 @@ function connectDockSignals(w) {
 }
 
 function onDockGeometryChanged(w) {
-    try {
-        const output = resolveOutput(w);
-        if (!output) {
-            return;
+    const output = resolveOutput(w);
+    if (!output) {
+        return;
+    }
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        if (state.output === output) {
+            scheduleApply(state);
         }
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            if (state.output === output) {
-                scheduleApply(state);
-            }
-        }
-    } catch (e) {
-        print(`kwarter: onDockGeometryChanged failed: ${e}`);
     }
 }
 
 function connectDockWindows() {
-    try {
-        for (const w of workspace.windowList()) {
-            if (isDockWindow(w)) {
-                connectDockSignals(w);
-            }
+    for (const w of workspace.windowList()) {
+        if (isDockWindow(w)) {
+            connectDockSignals(w);
         }
-    } catch (e) {
-        print(`kwarter: connectDockWindows failed: ${e}`);
     }
 }
 
@@ -109,11 +105,7 @@ function disconnectOutputSignals(output) {
         output.geometryChanged &&
         typeof output.geometryChanged.disconnect === "function"
     ) {
-        try {
-            output.geometryChanged.disconnect(handler);
-        } catch (e) {
-            print(`kwarter: output signal disconnect failed: ${e}`);
-        }
+        output.geometryChanged.disconnect(handler);
     }
     outputHandlers.delete(output);
     connectedOutputs.delete(output);
@@ -146,176 +138,142 @@ function moveWindowBetweenStates(w, oldState) {
 }
 
 function onCurrentDesktopChanged(previous, current, output) {
-    try {
-        const targetOutput = output || null;
-        const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
-        for (const w of workspace.windowList()) {
-            if (
-                eligible(w) &&
-                desktopFor(w) === desktop &&
-                (!targetOutput || resolveOutput(w) === targetOutput) &&
-                !findStateContaining(w)
-            ) {
-                addWindow(w);
-            }
+    const targetOutput = output || null;
+    const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
+    for (const w of workspace.windowList()) {
+        if (
+            eligible(w) &&
+            desktopFor(w) === desktop &&
+            (!targetOutput || resolveOutput(w) === targetOutput) &&
+            !findStateContaining(w)
+        ) {
+            addWindow(w);
         }
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            if (
-                state.desktop === desktop &&
-                (!targetOutput || state.output === targetOutput)
-            ) {
-                scheduleApply(state);
-            }
+    }
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        if (
+            state.desktop === desktop &&
+            (!targetOutput || state.output === targetOutput)
+        ) {
+            scheduleApply(state);
         }
-    } catch (e) {
-        print(`kwarter: onCurrentDesktopChanged failed: ${e}`);
     }
 }
 
 function onDesktopListChanged() {
-    try {
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            if (contains(workspace.desktops, state.desktop)) {
-                continue;
-            }
-            const tracked = Array.from(
-                new Set(state.slots.concat(state.minimized, state.lru))
-            );
-            for (const w of tracked) {
-                detachFromState(state, w);
-            }
-            delete states[key];
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        if (contains(workspace.desktops, state.desktop)) {
+            continue;
         }
-        for (const w of workspace.windowList()) {
-            if (
-                eligible(w) &&
-                desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
-                !findStateContaining(w)
-            ) {
-                addWindow(w);
-            }
+        const tracked = trackedWindows(state);
+        for (const w of tracked) {
+            detachFromState(state, w);
         }
-        for (const key of Object.keys(states)) {
-            scheduleApply(states[key]);
+        delete states[key];
+    }
+    for (const w of workspace.windowList()) {
+        if (
+            eligible(w) &&
+            desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
+            !findStateContaining(w)
+        ) {
+            addWindow(w);
         }
-    } catch (e) {
-        print(`kwarter: onDesktopListChanged failed: ${e}`);
+    }
+    for (const key of Object.keys(states)) {
+        scheduleApply(states[key]);
     }
 }
 
 function onCurrentActivityChanged() {
-    try {
-        const affected = [];
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            const tracked = Array.from(
-                new Set(state.slots.concat(state.minimized, state.lru))
-            );
-            let touched = false;
-            for (const w of tracked) {
-                if (!windowOnActivity(w)) {
-                    detachFromState(state, w);
-                    touched = true;
-                }
-            }
-            if (touched) {
-                affected.push(state);
+    const affected = [];
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        const tracked = trackedWindows(state);
+        let touched = false;
+        for (const w of tracked) {
+            if (!windowOnActivity(w)) {
+                detachFromState(state, w);
+                touched = true;
             }
         }
-        for (const state of affected) {
-            scheduleApply(state);
+        if (touched) {
+            affected.push(state);
         }
-        for (const w of workspace.windowList()) {
-            if (eligible(w) && windowOnActivity(w) && !findStateContaining(w)) {
-                addWindow(w);
-            }
+    }
+    for (const state of affected) {
+        scheduleApply(state);
+    }
+    for (const w of workspace.windowList()) {
+        if (eligible(w) && windowOnActivity(w) && !findStateContaining(w)) {
+            addWindow(w);
         }
-    } catch (e) {
-        print(`kwarter: onCurrentActivityChanged failed: ${e}`);
     }
 }
 
 function onScreensChanged() {
-    try {
-        for (const output of Array.from(connectedOutputs)) {
-            if (!contains(workspace.screens, output)) {
-                disconnectOutputSignals(output);
-            }
+    for (const output of Array.from(connectedOutputs)) {
+        if (!contains(workspace.screens, output)) {
+            disconnectOutputSignals(output);
         }
-        for (const output of workspace.screens) {
-            connectOutputSignals(output);
+    }
+    for (const output of workspace.screens) {
+        connectOutputSignals(output);
+    }
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        if (contains(workspace.screens, state.output)) {
+            continue;
         }
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            if (contains(workspace.screens, state.output)) {
-                continue;
-            }
-            const tracked = Array.from(
-                new Set(state.slots.concat(state.minimized, state.lru))
-            );
-            for (const w of tracked) {
-                detachFromState(state, w);
-            }
-            delete states[key];
+        const tracked = trackedWindows(state);
+        for (const w of tracked) {
+            detachFromState(state, w);
         }
-        for (const w of workspace.windowList()) {
-            if (eligible(w) && !findStateContaining(w)) {
-                addWindow(w);
-            }
+        delete states[key];
+    }
+    for (const w of workspace.windowList()) {
+        if (eligible(w) && !findStateContaining(w)) {
+            addWindow(w);
         }
-        for (const key of Object.keys(states)) {
-            scheduleApply(states[key]);
-        }
-    } catch (e) {
-        print(`kwarter: onScreensChanged failed: ${e}`);
+    }
+    for (const key of Object.keys(states)) {
+        scheduleApply(states[key]);
     }
 }
 
 function onOutputGeometryChanged(output) {
-    try {
-        for (const key of Object.keys(states)) {
-            const state = states[key];
-            if (state.output === output) {
-                scheduleApply(state);
-            }
+    for (const key of Object.keys(states)) {
+        const state = states[key];
+        if (state.output === output) {
+            scheduleApply(state);
         }
-    } catch (e) {
-        print(`kwarter: onOutputGeometryChanged failed: ${e}`);
     }
 }
 
 function onDesktopsChanged(w) {
-    try {
-        if (isDragOwned(w)) {
-            return;
-        }
-        const state = findStateContaining(w);
-        if (state && state.applying) {
-            scheduleApply(state);
-            return;
-        }
-        moveWindowBetweenStates(w, state);
-    } catch (e) {
-        print(`kwarter: onDesktopsChanged failed: ${e}`);
+    if (isDragOwned(w)) {
+        return;
     }
+    const state = findStateContaining(w);
+    if (state && state.applying) {
+        scheduleApply(state);
+        return;
+    }
+    moveWindowBetweenStates(w, state);
 }
 
 function onOutputChanged(w) {
-    try {
-        if (isDragOwned(w)) {
-            return;
-        }
-        const state = findStateContaining(w);
-        if (state && state.applying) {
-            scheduleApply(state);
-            return;
-        }
-        moveWindowBetweenStates(w, state);
-    } catch (e) {
-        print(`kwarter: onOutputChanged failed: ${e}`);
+    if (isDragOwned(w)) {
+        return;
     }
+    const state = findStateContaining(w);
+    if (state && state.applying) {
+        scheduleApply(state);
+        return;
+    }
+    moveWindowBetweenStates(w, state);
 }
 
 module.exports = {

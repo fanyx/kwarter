@@ -39,33 +39,17 @@ function findStateContaining(w) {
     if (!w) {
         return null;
     }
-    const keys = Object.keys(states);
-    for (let i = 0; i < keys.length; i++) {
-        const state = states[keys[i]];
-        if (
-            state.slots.indexOf(w) !== -1 ||
-            state.lru.indexOf(w) !== -1 ||
-            state.minimized.indexOf(w) !== -1
-        ) {
-            return state;
-        }
-    }
-    return null;
+    return (
+        Object.values(states).find(
+            (state) => state.slots.includes(w) || state.minimized.includes(w)
+        ) || null
+    );
 }
 
 function detachFromState(state, w) {
-    const slotIndex = state.slots.indexOf(w);
-    if (slotIndex !== -1) {
-        state.slots.splice(slotIndex, 1);
-    }
-    const lruIndex = state.lru.indexOf(w);
-    if (lruIndex !== -1) {
-        state.lru.splice(lruIndex, 1);
-    }
-    const minimizedIndex = state.minimized.indexOf(w);
-    if (minimizedIndex !== -1) {
-        state.minimized.splice(minimizedIndex, 1);
-    }
+    state.slots = state.slots.filter((item) => item !== w);
+    state.lru = state.lru.filter((item) => item !== w);
+    state.minimized = state.minimized.filter((item) => item !== w);
 }
 
 function touch(state, w) {
@@ -136,13 +120,9 @@ function addToState(state, w) {
         return;
     }
 
-    let victim = chooseVictim(state);
-    if (!victim) {
-        victim = state.slots[0];
-    }
+    const victim = chooseVictim(state) || state.slots[0];
     const index = state.slots.indexOf(victim);
-
-    if (!victim || index === -1) {
+    if (index === -1) {
         scheduleApply(state);
         return;
     }

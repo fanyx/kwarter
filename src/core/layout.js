@@ -41,9 +41,6 @@ function slotRects(count, area, gap = GAP) {
 }
 
 function directionalTarget(rects, activeIndex, dx, dy) {
-    if (!Array.isArray(rects)) {
-        return -1;
-    }
     if (dx === 0 && dy === 0) {
         return -1;
     }
@@ -89,19 +86,13 @@ function chooseVictimIndex(lruIds, blockedIds) {
     if (lruIds.length === 0) {
         return -1;
     }
-    for (let i = 0; i < lruIds.length; i++) {
-        if (!blockedIds.includes(lruIds[i])) {
-            return i;
-        }
-    }
-    return 0;
+    const index = lruIds.findIndex((id) => !blockedIds.includes(id));
+    return index === -1 ? 0 : index;
 }
 
 function swapSlots(slots, a, b) {
     const copy = slots.slice();
-    const tmp = copy[a];
-    copy[a] = copy[b];
-    copy[b] = tmp;
+    [copy[a], copy[b]] = [copy[b], copy[a]];
     return copy;
 }
 

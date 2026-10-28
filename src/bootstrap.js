@@ -20,36 +20,32 @@ const { applyState } = require("./core/apply");
 const { setApplyHandler } = require("./core/schedule");
 
 function main() {
-    try {
-        setApplyHandler(applyState);
-        workspace.windowAdded.connect(onWindowAdded);
-        workspace.windowRemoved.connect(onWindowRemoved);
-        workspace.windowActivated.connect(onWindowActivated);
-        connectSignal(
-            workspace.currentDesktopChanged,
-            onCurrentDesktopChanged,
-            "workspace.currentDesktopChanged"
-        );
-        connectSignal(
-            workspace.currentActivityChanged,
-            onCurrentActivityChanged,
-            "workspace.currentActivityChanged"
-        );
-        connectSignal(
-            workspace.desktopsChanged,
-            onDesktopListChanged,
-            "workspace.desktopsChanged"
-        );
-        connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
-        for (const output of workspace.screens) {
-            connectOutputSignals(output);
-        }
-        connectDockWindows();
-        registerAllShortcuts();
-        replayExistingWindows();
-    } catch (e) {
-        print(`kwarter: main failed: ${e}`);
+    setApplyHandler(applyState);
+    workspace.windowAdded.connect(onWindowAdded);
+    workspace.windowRemoved.connect(onWindowRemoved);
+    workspace.windowActivated.connect(onWindowActivated);
+    connectSignal(
+        workspace.currentDesktopChanged,
+        onCurrentDesktopChanged,
+        "workspace.currentDesktopChanged"
+    );
+    connectSignal(
+        workspace.currentActivityChanged,
+        onCurrentActivityChanged,
+        "workspace.currentActivityChanged"
+    );
+    connectSignal(
+        workspace.desktopsChanged,
+        onDesktopListChanged,
+        "workspace.desktopsChanged"
+    );
+    connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
+    for (const output of workspace.screens) {
+        connectOutputSignals(output);
     }
+    connectDockWindows();
+    registerAllShortcuts();
+    replayExistingWindows();
 }
 
 module.exports = {

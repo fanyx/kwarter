@@ -47,9 +47,6 @@
             }
 
             function directionalTarget(rects, activeIndex, dx, dy) {
-                if (!Array.isArray(rects)) {
-                    return -1;
-                }
                 if (dx === 0 && dy === 0) {
                     return -1;
                 }
@@ -95,19 +92,13 @@
                 if (lruIds.length === 0) {
                     return -1;
                 }
-                for (let i = 0; i < lruIds.length; i++) {
-                    if (!blockedIds.includes(lruIds[i])) {
-                        return i;
-                    }
-                }
-                return 0;
+                const index = lruIds.findIndex((id) => !blockedIds.includes(id));
+                return index === -1 ? 0 : index;
             }
 
             function swapSlots(slots, a, b) {
                 const copy = slots.slice();
-                const tmp = copy[a];
-                copy[a] = copy[b];
-                copy[b] = tmp;
+                [copy[a], copy[b]] = [copy[b], copy[a]];
                 return copy;
             }
 
@@ -164,22 +155,10 @@
 
             const { warnedTileIds } = require("./registry");
 
-            const generatedIds = new WeakMap();
-            let nextGeneratedId = 0;
-
             function windowId(w) {
-                if (!w) {
-                    return "";
-                }
-                if (w.internalId !== undefined && w.internalId !== null) {
-                    return String(w.internalId);
-                }
-                let id = generatedIds.get(w);
-                if (id === undefined) {
-                    id = `window-${nextGeneratedId++}`;
-                    generatedIds.set(w, id);
-                }
-                return id;
+                return w && w.internalId !== undefined && w.internalId !== null
+                    ? String(w.internalId)
+                    : "";
             }
 
             function desktopFor(w) {
@@ -191,13 +170,9 @@
 
             function currentDesktopFor(output) {
                 if (output && typeof workspace.currentDesktopForScreen === "function") {
-                    try {
-                        const desktop = workspace.currentDesktopForScreen(output);
-                        if (desktop) {
-                            return desktop;
-                        }
-                    } catch (e) {
-                        print(`kwarter: currentDesktopForScreen failed: ${e}`);
+                    const desktop = workspace.currentDesktopForScreen(output);
+                    if (desktop) {
+                        return desktop;
                     }
                 }
                 return workspace.currentDesktop;
@@ -236,15 +211,7 @@
             }
 
             function contains(list, item) {
-                if (!list) {
-                    return false;
-                }
-                for (let i = 0; i < list.length; i++) {
-                    if (list[i] === item) {
-                        return true;
-                    }
-                }
-                return false;
+                return Boolean(list) && Array.prototype.includes.call(list, item);
             }
 
             function eligible(w) {
@@ -267,13 +234,7 @@
 
             function resolveRoot(w) {
                 let current = w;
-                const visited = new Set();
                 while (current && current.transientFor) {
-                    const id = current.internalId !== undefined ? current.internalId : current;
-                    if (visited.has(id)) {
-                        break;
-                    }
-                    visited.add(id);
                     current = current.transientFor;
                 }
                 return current;
@@ -411,33 +372,17 @@
                 if (!w) {
                     return null;
                 }
-                const keys = Object.keys(states);
-                for (let i = 0; i < keys.length; i++) {
-                    const state = states[keys[i]];
-                    if (
-                        state.slots.indexOf(w) !== -1 ||
-                        state.lru.indexOf(w) !== -1 ||
-                        state.minimized.indexOf(w) !== -1
-                    ) {
-                        return state;
-                    }
-                }
-                return null;
+                return (
+                    Object.values(states).find(
+                        (state) => state.slots.includes(w) || state.minimized.includes(w)
+                    ) || null
+                );
             }
 
             function detachFromState(state, w) {
-                const slotIndex = state.slots.indexOf(w);
-                if (slotIndex !== -1) {
-                    state.slots.splice(slotIndex, 1);
-                }
-                const lruIndex = state.lru.indexOf(w);
-                if (lruIndex !== -1) {
-                    state.lru.splice(lruIndex, 1);
-                }
-                const minimizedIndex = state.minimized.indexOf(w);
-                if (minimizedIndex !== -1) {
-                    state.minimized.splice(minimizedIndex, 1);
-                }
+                state.slots = state.slots.filter((item) => item !== w);
+                state.lru = state.lru.filter((item) => item !== w);
+                state.minimized = state.minimized.filter((item) => item !== w);
             }
 
             function touch(state, w) {
@@ -508,13 +453,9 @@
                     return;
                 }
 
-                let victim = chooseVictim(state);
-                if (!victim) {
-                    victim = state.slots[0];
-                }
+                const victim = chooseVictim(state) || state.slots[0];
                 const index = state.slots.indexOf(victim);
-
-                if (!victim || index === -1) {
+                if (index === -1) {
                     scheduleApply(state);
                     return;
                 }
@@ -597,116 +538,100 @@
             }
 
             function addWindow(w) {
-                try {
-                    if (!eligible(w)) {
-                        return;
-                    }
-
-                    if (windowConnector) {
-                        windowConnector(w);
-                    }
-
-                    if (findStateContaining(w)) {
-                        return;
-                    }
-                    if (w.fullScreen) {
-                        return;
-                    }
-
-                    if (!windowOnActivity(w)) {
-                        return;
-                    }
-
-                    const desktop = desktopFor(w);
-                    const output = resolveOutput(w);
-
-                    if (!output) {
-                        if (!retriedOutput.has(w)) {
-                            retriedOutput.add(w);
-                            defer(() => addWindow(w));
-                        }
-                        return;
-                    }
-
-                    if (!detachNativeTile(w)) {
-                        return;
-                    }
-
-                    retriedOutput.delete(w);
-                    const state = stateFor(output, desktop);
-
-                    if (w.minimized) {
-                        if (state.minimized.indexOf(w) === -1) {
-                            state.minimized.push(w);
-                        }
-                        return;
-                    }
-
-                    addToState(state, w);
-                    scheduleApply(state);
-                } catch (e) {
-                    print(`kwarter: addWindow failed: ${e}`);
+                if (!eligible(w)) {
+                    return;
                 }
+
+                if (windowConnector) {
+                    windowConnector(w);
+                }
+
+                if (findStateContaining(w)) {
+                    return;
+                }
+                if (w.fullScreen) {
+                    return;
+                }
+
+                if (!windowOnActivity(w)) {
+                    return;
+                }
+
+                const desktop = desktopFor(w);
+                const output = resolveOutput(w);
+
+                if (!output) {
+                    if (!retriedOutput.has(w)) {
+                        retriedOutput.add(w);
+                        defer(() => addWindow(w));
+                    }
+                    return;
+                }
+
+                if (!detachNativeTile(w)) {
+                    return;
+                }
+
+                retriedOutput.delete(w);
+                const state = stateFor(output, desktop);
+
+                if (w.minimized) {
+                    if (state.minimized.indexOf(w) === -1) {
+                        state.minimized.push(w);
+                    }
+                    return;
+                }
+
+                addToState(state, w);
+                scheduleApply(state);
             }
 
             function removeWindow(w) {
-                try {
-                    retriedOutput.delete(w);
-                    connectedWindowIds.delete(windowId(w));
-                    connectedDockIds.delete(windowId(w));
+                retriedOutput.delete(w);
+                connectedWindowIds.delete(windowId(w));
+                connectedDockIds.delete(windowId(w));
 
-                    const state = findStateContaining(w);
-                    if (!state) {
-                        return;
-                    }
+                const state = findStateContaining(w);
+                if (!state) {
+                    return;
+                }
 
-                    const wasVisible = state.slots.indexOf(w) !== -1;
-                    const index = state.slots.indexOf(w);
+                const wasVisible = state.slots.indexOf(w) !== -1;
+                const index = state.slots.indexOf(w);
 
-                    detachFromState(state, w);
+                detachFromState(state, w);
 
-                    while (state.minimized.length > 0 && !isAlive(state.minimized[state.minimized.length - 1])) {
-                        state.minimized.pop();
-                    }
+                while (state.minimized.length > 0 && !isAlive(state.minimized[state.minimized.length - 1])) {
+                    state.minimized.pop();
+                }
 
-                    let restored = null;
-                    if (wasVisible && state.minimized.length > 0) {
-                        restored = state.minimized.pop();
-                        restored.minimized = false;
-                        state.slots.splice(index, 0, restored);
-                        touch(state, restored);
-                    }
+                let restored = null;
+                if (wasVisible && state.minimized.length > 0) {
+                    restored = state.minimized.pop();
+                    restored.minimized = false;
+                    state.slots.splice(index, 0, restored);
+                    touch(state, restored);
+                }
 
-                    scheduleApply(state);
+                scheduleApply(state);
 
-                    if (restored) {
-                        try {
-                            workspace.activeWindow = restored;
-                        } catch (e) {
-                            print(`kwarter: failed to activate restored window ${windowId(restored)}: ${e}`);
-                        }
-                    }
-                } catch (e) {
-                    print(`kwarter: removeWindow failed: ${e}`);
+                if (restored) {
+                    workspace.activeWindow = restored;
                 }
             }
 
             function replayExistingWindows() {
-                try {
-                    const windows = workspace
-                        .windowList()
-                        .filter(
-                            (w) =>
-                                eligible(w) &&
-                                desktopFor(w) === currentDesktopFor(resolveOutput(w))
-                        )
-                        .sort((a, b) => (a.stackingOrder || 0) - (b.stackingOrder || 0));
+                const windows = workspace
+                    .windowList()
+                    .filter(
+                        (w) =>
+                            eligible(w) &&
+                            desktopFor(w) === currentDesktopFor(resolveOutput(w))
+                    )
+                    .sort((a, b) => (a.stackingOrder || 0) - (b.stackingOrder || 0));
 
-                    for (const w of windows) {
-                        addWindow(w);
-                    }
-                } catch (e) {
-                    print(`kwarter: replayExistingWindows failed: ${e}`);
+                for (const w of windows) {
+                    addWindow(w);
                 }
             }
 
@@ -745,114 +670,87 @@
             }
 
             function onInteractiveMoveResizeStarted(w) {
-                try {
-                    if (activeDrag && !isAlive(activeDrag.window)) {
-                        activeDrag = null;
-                    }
-                    activeDrag = { window: w, resizing: dragIsResize(w) };
-                } catch (e) {
-                    print(`kwarter: onInteractiveMoveResizeStarted failed: ${e}`);
+                if (activeDrag && !isAlive(activeDrag.window)) {
+                    activeDrag = null;
                 }
+                activeDrag = { window: w, resizing: dragIsResize(w) };
             }
 
             function onInteractiveMoveResizeFinished(w) {
-                try {
-                    let drag = activeDrag;
-                    if (drag && !isAlive(drag.window)) {
-                        drag = null;
-                    }
-                    activeDrag = null;
-                    const resizing = Boolean(drag && drag.window === w ? drag.resizing : false);
-                    pendingDrop = { window: w, resizing: resizing };
-                    defer(() => {
-                        try {
-                            handleDrop(w, resizing);
-                        } catch (e) {
-                            print(`kwarter: deferred drop failed: ${e}`);
-                        } finally {
-                            if (pendingDrop && pendingDrop.window === w) {
-                                pendingDrop = null;
-                            }
-                        }
-                    });
-                } catch (e) {
-                    print(`kwarter: onInteractiveMoveResizeFinished failed: ${e}`);
+                let drag = activeDrag;
+                if (drag && !isAlive(drag.window)) {
+                    drag = null;
                 }
+                activeDrag = null;
+                const resizing = Boolean(drag && drag.window === w ? drag.resizing : false);
+                pendingDrop = { window: w, resizing: resizing };
+                defer(() => {
+                    try {
+                        handleDrop(w, resizing);
+                    } finally {
+                        if (pendingDrop && pendingDrop.window === w) {
+                            pendingDrop = null;
+                        }
+                    }
+                });
             }
 
             function windowsAt(pos) {
                 const found = workspace.windowAt(pos, -1);
-                if (!found) {
-                    return [];
-                }
-                if (Array.isArray(found)) {
-                    return found;
-                }
-                if (typeof found.length === "number") {
-                    const list = [];
-                    for (let i = 0; i < found.length; i++) {
-                        list.push(found[i]);
-                    }
-                    return list;
-                }
-                return [found];
+                return found ? Array.from(found) : [];
             }
 
             function handleDrop(w, resizing) {
-                try {
-                    if (!isAlive(w)) {
-                        return;
-                    }
-
-                    const source = findStateContaining(w);
-                    if (!source || source.slots.indexOf(w) === -1) {
-                        return;
-                    }
-                    if (w.fullScreen) {
-                        return;
-                    }
-
-                    if (resizing) {
-                        scheduleApply(source);
-                        return;
-                    }
-
-                    const pos = workspace.cursorPos;
-                    const output = workspace.screenAt(pos) || w.output;
-                    const destination = stateFor(output, desktopFor(w));
-
-                    if (destination !== source) {
-                        detachFromState(source, w);
-                        addToState(destination, w);
-                        scheduleApply(source);
-                        scheduleApply(destination);
-                        return;
-                    }
-
-                    const windows = windowsAt(pos);
-                    let target = null;
-                    for (const candidate of windows) {
-                        if (!candidate || candidate === w || !isAlive(candidate)) {
-                            continue;
-                        }
-                        target = candidate;
-                        break;
-                    }
-
-                    if (
-                        target &&
-                        !target.fullScreen &&
-                        source.slots.indexOf(target) !== -1
-                    ) {
-                        const sourceIndex = source.slots.indexOf(w);
-                        const targetIndex = source.slots.indexOf(target);
-                        source.slots = swapSlots(source.slots, sourceIndex, targetIndex);
-                    }
-
-                    scheduleApply(source);
-                } catch (e) {
-                    print(`kwarter: handleDrop failed: ${e}`);
+                if (!isAlive(w)) {
+                    return;
                 }
+
+                const source = findStateContaining(w);
+                if (!source || source.slots.indexOf(w) === -1) {
+                    return;
+                }
+                if (w.fullScreen) {
+                    return;
+                }
+
+                if (resizing) {
+                    scheduleApply(source);
+                    return;
+                }
+
+                const pos = workspace.cursorPos;
+                const output = workspace.screenAt(pos) || w.output;
+                const destination = stateFor(output, desktopFor(w));
+
+                if (destination !== source) {
+                    detachFromState(source, w);
+                    addToState(destination, w);
+                    scheduleApply(source);
+                    scheduleApply(destination);
+                    return;
+                }
+
+                const windows = windowsAt(pos);
+                let target = null;
+                for (const candidate of windows) {
+                    if (!candidate || candidate === w || !isAlive(candidate)) {
+                        continue;
+                    }
+                    target = candidate;
+                    break;
+                }
+
+                if (
+                    target &&
+                    !target.fullScreen &&
+                    source.slots.indexOf(target) !== -1
+                ) {
+                    const sourceIndex = source.slots.indexOf(w);
+                    const targetIndex = source.slots.indexOf(target);
+                    source.slots = swapSlots(source.slots, sourceIndex, targetIndex);
+                }
+
+                scheduleApply(source);
             }
 
             function isDragOwned(w) {
@@ -905,6 +803,10 @@
 
             const outputHandlers = new Map();
 
+            function trackedWindows(state) {
+                return Array.from(new Set(state.slots.concat(state.minimized, state.lru)));
+            }
+
             function connectSignal(signal, handler, name) {
                 if (signal && typeof signal.connect === "function") {
                     signal.connect(handler);
@@ -936,31 +838,23 @@
             }
 
             function onDockGeometryChanged(w) {
-                try {
-                    const output = resolveOutput(w);
-                    if (!output) {
-                        return;
+                const output = resolveOutput(w);
+                if (!output) {
+                    return;
+                }
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    if (state.output === output) {
+                        scheduleApply(state);
                     }
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        if (state.output === output) {
-                            scheduleApply(state);
-                        }
-                    }
-                } catch (e) {
-                    print(`kwarter: onDockGeometryChanged failed: ${e}`);
                 }
             }
 
             function connectDockWindows() {
-                try {
-                    for (const w of workspace.windowList()) {
-                        if (isDockWindow(w)) {
-                            connectDockSignals(w);
-                        }
+                for (const w of workspace.windowList()) {
+                    if (isDockWindow(w)) {
+                        connectDockSignals(w);
                     }
-                } catch (e) {
-                    print(`kwarter: connectDockWindows failed: ${e}`);
                 }
             }
 
@@ -986,11 +880,7 @@
                     output.geometryChanged &&
                     typeof output.geometryChanged.disconnect === "function"
                 ) {
-                    try {
-                        output.geometryChanged.disconnect(handler);
-                    } catch (e) {
-                        print(`kwarter: output signal disconnect failed: ${e}`);
-                    }
+                    output.geometryChanged.disconnect(handler);
                 }
                 outputHandlers.delete(output);
                 connectedOutputs.delete(output);
@@ -1023,176 +913,142 @@
             }
 
             function onCurrentDesktopChanged(previous, current, output) {
-                try {
-                    const targetOutput = output || null;
-                    const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
-                    for (const w of workspace.windowList()) {
-                        if (
-                            eligible(w) &&
-                            desktopFor(w) === desktop &&
-                            (!targetOutput || resolveOutput(w) === targetOutput) &&
-                            !findStateContaining(w)
-                        ) {
-                            addWindow(w);
-                        }
+                const targetOutput = output || null;
+                const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
+                for (const w of workspace.windowList()) {
+                    if (
+                        eligible(w) &&
+                        desktopFor(w) === desktop &&
+                        (!targetOutput || resolveOutput(w) === targetOutput) &&
+                        !findStateContaining(w)
+                    ) {
+                        addWindow(w);
                     }
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        if (
-                            state.desktop === desktop &&
-                            (!targetOutput || state.output === targetOutput)
-                        ) {
-                            scheduleApply(state);
-                        }
+                }
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    if (
+                        state.desktop === desktop &&
+                        (!targetOutput || state.output === targetOutput)
+                    ) {
+                        scheduleApply(state);
                     }
-                } catch (e) {
-                    print(`kwarter: onCurrentDesktopChanged failed: ${e}`);
                 }
             }
 
             function onDesktopListChanged() {
-                try {
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        if (contains(workspace.desktops, state.desktop)) {
-                            continue;
-                        }
-                        const tracked = Array.from(
-                            new Set(state.slots.concat(state.minimized, state.lru))
-                        );
-                        for (const w of tracked) {
-                            detachFromState(state, w);
-                        }
-                        delete states[key];
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    if (contains(workspace.desktops, state.desktop)) {
+                        continue;
                     }
-                    for (const w of workspace.windowList()) {
-                        if (
-                            eligible(w) &&
-                            desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
-                            !findStateContaining(w)
-                        ) {
-                            addWindow(w);
-                        }
+                    const tracked = trackedWindows(state);
+                    for (const w of tracked) {
+                        detachFromState(state, w);
                     }
-                    for (const key of Object.keys(states)) {
-                        scheduleApply(states[key]);
+                    delete states[key];
+                }
+                for (const w of workspace.windowList()) {
+                    if (
+                        eligible(w) &&
+                        desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
+                        !findStateContaining(w)
+                    ) {
+                        addWindow(w);
                     }
-                } catch (e) {
-                    print(`kwarter: onDesktopListChanged failed: ${e}`);
+                }
+                for (const key of Object.keys(states)) {
+                    scheduleApply(states[key]);
                 }
             }
 
             function onCurrentActivityChanged() {
-                try {
-                    const affected = [];
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        const tracked = Array.from(
-                            new Set(state.slots.concat(state.minimized, state.lru))
-                        );
-                        let touched = false;
-                        for (const w of tracked) {
-                            if (!windowOnActivity(w)) {
-                                detachFromState(state, w);
-                                touched = true;
-                            }
-                        }
-                        if (touched) {
-                            affected.push(state);
+                const affected = [];
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    const tracked = trackedWindows(state);
+                    let touched = false;
+                    for (const w of tracked) {
+                        if (!windowOnActivity(w)) {
+                            detachFromState(state, w);
+                            touched = true;
                         }
                     }
-                    for (const state of affected) {
-                        scheduleApply(state);
+                    if (touched) {
+                        affected.push(state);
                     }
-                    for (const w of workspace.windowList()) {
-                        if (eligible(w) && windowOnActivity(w) && !findStateContaining(w)) {
-                            addWindow(w);
-                        }
+                }
+                for (const state of affected) {
+                    scheduleApply(state);
+                }
+                for (const w of workspace.windowList()) {
+                    if (eligible(w) && windowOnActivity(w) && !findStateContaining(w)) {
+                        addWindow(w);
                     }
-                } catch (e) {
-                    print(`kwarter: onCurrentActivityChanged failed: ${e}`);
                 }
             }
 
             function onScreensChanged() {
-                try {
-                    for (const output of Array.from(connectedOutputs)) {
-                        if (!contains(workspace.screens, output)) {
-                            disconnectOutputSignals(output);
-                        }
+                for (const output of Array.from(connectedOutputs)) {
+                    if (!contains(workspace.screens, output)) {
+                        disconnectOutputSignals(output);
                     }
-                    for (const output of workspace.screens) {
-                        connectOutputSignals(output);
+                }
+                for (const output of workspace.screens) {
+                    connectOutputSignals(output);
+                }
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    if (contains(workspace.screens, state.output)) {
+                        continue;
                     }
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        if (contains(workspace.screens, state.output)) {
-                            continue;
-                        }
-                        const tracked = Array.from(
-                            new Set(state.slots.concat(state.minimized, state.lru))
-                        );
-                        for (const w of tracked) {
-                            detachFromState(state, w);
-                        }
-                        delete states[key];
+                    const tracked = trackedWindows(state);
+                    for (const w of tracked) {
+                        detachFromState(state, w);
                     }
-                    for (const w of workspace.windowList()) {
-                        if (eligible(w) && !findStateContaining(w)) {
-                            addWindow(w);
-                        }
+                    delete states[key];
+                }
+                for (const w of workspace.windowList()) {
+                    if (eligible(w) && !findStateContaining(w)) {
+                        addWindow(w);
                     }
-                    for (const key of Object.keys(states)) {
-                        scheduleApply(states[key]);
-                    }
-                } catch (e) {
-                    print(`kwarter: onScreensChanged failed: ${e}`);
+                }
+                for (const key of Object.keys(states)) {
+                    scheduleApply(states[key]);
                 }
             }
 
             function onOutputGeometryChanged(output) {
-                try {
-                    for (const key of Object.keys(states)) {
-                        const state = states[key];
-                        if (state.output === output) {
-                            scheduleApply(state);
-                        }
+                for (const key of Object.keys(states)) {
+                    const state = states[key];
+                    if (state.output === output) {
+                        scheduleApply(state);
                     }
-                } catch (e) {
-                    print(`kwarter: onOutputGeometryChanged failed: ${e}`);
                 }
             }
 
             function onDesktopsChanged(w) {
-                try {
-                    if (isDragOwned(w)) {
-                        return;
-                    }
-                    const state = findStateContaining(w);
-                    if (state && state.applying) {
-                        scheduleApply(state);
-                        return;
-                    }
-                    moveWindowBetweenStates(w, state);
-                } catch (e) {
-                    print(`kwarter: onDesktopsChanged failed: ${e}`);
+                if (isDragOwned(w)) {
+                    return;
                 }
+                const state = findStateContaining(w);
+                if (state && state.applying) {
+                    scheduleApply(state);
+                    return;
+                }
+                moveWindowBetweenStates(w, state);
             }
 
             function onOutputChanged(w) {
-                try {
-                    if (isDragOwned(w)) {
-                        return;
-                    }
-                    const state = findStateContaining(w);
-                    if (state && state.applying) {
-                        scheduleApply(state);
-                        return;
-                    }
-                    moveWindowBetweenStates(w, state);
-                } catch (e) {
-                    print(`kwarter: onOutputChanged failed: ${e}`);
+                if (isDragOwned(w)) {
+                    return;
                 }
+                const state = findStateContaining(w);
+                if (state && state.applying) {
+                    scheduleApply(state);
+                    return;
+                }
+                moveWindowBetweenStates(w, state);
             }
 
             module.exports = {
@@ -1274,135 +1130,103 @@
             }
 
             function onWindowAdded(w) {
-                try {
-                    if (isDockWindow(w)) {
-                        connectDockSignals(w);
-                        return;
-                    }
-                    defer(() => {
-                        try {
-                            addWindow(w);
-                        } catch (e) {
-                            print(`kwarter: deferred add failed: ${e}`);
-                        }
-                    });
-                } catch (e) {
-                    print(`kwarter: onWindowAdded failed: ${e}`);
+                if (isDockWindow(w)) {
+                    connectDockSignals(w);
+                    return;
                 }
+                defer(() => {
+                    addWindow(w);
+                });
             }
 
             function onWindowRemoved(w) {
-                try {
-                    removeWindow(w);
-                } catch (e) {
-                    print(`kwarter: onWindowRemoved failed: ${e}`);
-                }
+                removeWindow(w);
             }
 
             function onWindowActivated(w) {
-                try {
-                    const root = resolveRoot(w);
-                    const state = findStateContaining(root);
-                    if (state && state.slots.indexOf(root) !== -1) {
-                        touch(state, root);
-                    }
-                } catch (e) {
-                    print(`kwarter: onWindowActivated failed: ${e}`);
+                const root = resolveRoot(w);
+                const state = findStateContaining(root);
+                if (state && state.slots.indexOf(root) !== -1) {
+                    touch(state, root);
                 }
             }
 
             function onActivitiesChanged(w) {
-                try {
-                    if (isDragOwned(w)) {
-                        return;
-                    }
-                    const state = findStateContaining(w);
-                    if (state && state.applying) {
-                        scheduleApply(state);
-                        return;
-                    }
-                    if (!windowOnActivity(w)) {
-                        if (state) {
-                            detachFromState(state, w);
-                            scheduleApply(state);
-                        }
-                        return;
-                    }
-                    if (!state && eligible(w)) {
-                        addWindow(w);
-                        return;
-                    }
+                if (isDragOwned(w)) {
+                    return;
+                }
+                const state = findStateContaining(w);
+                if (state && state.applying) {
+                    scheduleApply(state);
+                    return;
+                }
+                if (!windowOnActivity(w)) {
                     if (state) {
+                        detachFromState(state, w);
                         scheduleApply(state);
                     }
-                } catch (e) {
-                    print(`kwarter: onActivitiesChanged failed: ${e}`);
+                    return;
+                }
+                if (!state && eligible(w)) {
+                    addWindow(w);
+                    return;
+                }
+                if (state) {
+                    scheduleApply(state);
                 }
             }
 
             function onMinimizedChanged(w) {
-                try {
-                    const state = findStateContaining(w);
-                    if (!state) {
-                        return;
-                    }
-                    if (state.applying) {
-                        scheduleApply(state);
-                        return;
-                    }
+                const state = findStateContaining(w);
+                if (!state) {
+                    return;
+                }
+                if (state.applying) {
+                    scheduleApply(state);
+                    return;
+                }
 
-                    if (w.minimized) {
-                        if (state.slots.indexOf(w) === -1) {
-                            return;
-                        }
-                        detachFromState(state, w);
-                        if (state.minimized.indexOf(w) === -1) {
-                            state.minimized.push(w);
-                        }
-                        scheduleApply(state);
-                        return;
-                    }
-
-                    if (state.minimized.indexOf(w) === -1) {
+                if (w.minimized) {
+                    if (state.slots.indexOf(w) === -1) {
                         return;
                     }
                     detachFromState(state, w);
-                    addToState(state, w);
+                    if (state.minimized.indexOf(w) === -1) {
+                        state.minimized.push(w);
+                    }
                     scheduleApply(state);
-                } catch (e) {
-                    print(`kwarter: onMinimizedChanged failed: ${e}`);
+                    return;
                 }
+
+                if (state.minimized.indexOf(w) === -1) {
+                    return;
+                }
+                detachFromState(state, w);
+                addToState(state, w);
+                scheduleApply(state);
             }
 
             function onFullScreenChanged(w) {
-                try {
-                    const state = findStateContaining(w);
-                    if (state && state.applying) {
-                        scheduleApply(state);
-                        return;
-                    }
+                const state = findStateContaining(w);
+                if (state && state.applying) {
+                    scheduleApply(state);
+                    return;
+                }
 
-                    if (state && state.slots.indexOf(w) !== -1) {
-                        scheduleApply(state);
-                        return;
-                    }
+                if (state && state.slots.indexOf(w) !== -1) {
+                    scheduleApply(state);
+                    return;
+                }
 
-                    if (!w.fullScreen && !state && eligible(w)) {
-                        addWindow(w);
-                    }
-                } catch (e) {
-                    print(`kwarter: onFullScreenChanged failed: ${e}`);
+                if (!w.fullScreen && !state && eligible(w)) {
+                    addWindow(w);
                 }
             }
 
             function onMaximizedChanged(w) {
-                try {
-                    const state = findStateContaining(w);
-                    if (state && !state.applying) {
-                        scheduleApply(state);
-                    }
-                } catch (e) {
-                    print(`kwarter: onMaximizedChanged failed: ${e}`);
+                const state = findStateContaining(w);
+                if (state && !state.applying) {
+                    scheduleApply(state);
                 }
             }
 
@@ -1428,49 +1252,45 @@
             const { scheduleApply } = require("../core/schedule");
 
             function swapDirection(dx, dy) {
-                try {
-                    const activeWindow = workspace.activeWindow;
-                    if (!activeWindow) {
-                        return;
-                    }
+                const activeWindow = workspace.activeWindow;
+                if (!activeWindow) {
+                    return;
+                }
 
-                    const root = resolveRoot(activeWindow);
-                    const state = findStateContaining(root);
-                    if (!state) {
-                        return;
-                    }
+                const root = resolveRoot(activeWindow);
+                const state = findStateContaining(root);
+                if (!state) {
+                    return;
+                }
 
-                    const activeIndex = state.slots.indexOf(root);
-                    if (activeIndex === -1) {
-                        return;
-                    }
-                    if (state.slots.length < 2) {
-                        return;
-                    }
-                    if (root.fullScreen) {
-                        return;
-                    }
+                const activeIndex = state.slots.indexOf(root);
+                if (activeIndex === -1) {
+                    return;
+                }
+                if (state.slots.length < 2) {
+                    return;
+                }
+                if (root.fullScreen) {
+                    return;
+                }
 
-                    const area = workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop);
-                    if (!area || area.width <= 0 || area.height <= 0) {
-                        print("kwarter: empty work area, skipping swap");
-                        return;
-                    }
+                const area = workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop);
+                if (!area || area.width <= 0 || area.height <= 0) {
+                    print("kwarter: empty work area, skipping swap");
+                    return;
+                }
 
-                    const rects = slotRects(state.slots.length, area, GAP);
-                    const targetIndex = directionalTarget(rects, activeIndex, dx, dy);
-                    if (targetIndex === -1) {
-                        return;
-                    }
+                const rects = slotRects(state.slots.length, area, GAP);
+                const targetIndex = directionalTarget(rects, activeIndex, dx, dy);
+                if (targetIndex === -1) {
+                    return;
+                }
 
-                    state.slots = swapSlots(state.slots, activeIndex, targetIndex);
-                    scheduleApply(state);
+                state.slots = swapSlots(state.slots, activeIndex, targetIndex);
+                scheduleApply(state);
 
-                    if (activeWindow === root) {
-                        workspace.activeWindow = root;
-                    }
-                } catch (e) {
-                    print(`kwarter: swapDirection failed: ${e}`);
+                if (activeWindow === root) {
+                    workspace.activeWindow = root;
                 }
             }
 
@@ -1484,12 +1304,8 @@
             const { swapDirection } = require("./actions/swap");
 
             function registerShortcutLogged(title, text, sequence, callback) {
-                try {
-                    if (!registerShortcut(title, text, sequence, callback)) {
-                        print(`kwarter: failed to register shortcut "${title}" (${sequence})`);
-                    }
-                } catch (e) {
-                    print(`kwarter: failed to register shortcut "${title}" (${sequence}): ${e}`);
+                if (!registerShortcut(title, text, sequence, callback)) {
+                    print(`kwarter: failed to register shortcut "${title}" (${sequence})`);
                 }
             }
 
@@ -1538,31 +1354,11 @@
             const { states, findStateContaining, pruneState } = require("./state");
             const { defer } = require("./timing");
 
-            function plainRect(rect) {
-                return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-            }
-
             function maximizeModeOf(w) {
-                try {
-                    if (typeof w.maximizeMode === "number") {
-                        return w.maximizeMode;
-                    }
-                    if (typeof w.maximizeMode === "function") {
-                        return w.maximizeMode();
-                    }
-                    if (typeof w.maximized === "boolean") {
-                        return w.maximized ? 3 : 0;
-                    }
-                } catch (e) {
-                    print(`kwarter: failed to read maximize state for ${windowId(w)}: ${e}`);
-                }
-                return null;
+                return typeof w.maximizeMode === "number" ? w.maximizeMode : null;
             }
 
             function setMaximizeIfNeeded(w, vertical, horizontal) {
-                if (!w || typeof w.setMaximize !== "function") {
-                    return;
-                }
                 if (w.fullScreen) {
                     return;
                 }
@@ -1583,19 +1379,20 @@
 
                 defer(() => {
                     for (const target of targets) {
-                        try {
-                            const w = target.w;
-                            if (!isAlive(w) || w.fullScreen) {
-                                continue;
-                            }
-                            if (findStateContaining(w) !== state || state.slots.indexOf(w) === -1) {
-                                continue;
-                            }
-                            if (!rectsClose(w.frameGeometry, target.rect, 1)) {
-                                w.frameGeometry = plainRect(target.rect);
-                            }
-                        } catch (e) {
-                            print(`kwarter: verifyState failed: ${e}`);
+                        const w = target.w;
+                        if (!isAlive(w) || w.fullScreen) {
+                            continue;
+                        }
+                        if (findStateContaining(w) !== state || state.slots.indexOf(w) === -1) {
+                            continue;
+                        }
+                        if (!rectsClose(w.frameGeometry, target.rect, 1)) {
+                            w.frameGeometry = {
+                                x: target.rect.x,
+                                y: target.rect.y,
+                                width: target.rect.width,
+                                height: target.rect.height,
+                            };
                         }
                     }
                 });
@@ -1662,20 +1459,22 @@
                         }
                         const minSize = w.minSize || { width: 0, height: 0 };
                         const rect = fitToMinSize(rects[i], minSize);
-                        w.frameGeometry = plainRect(rect);
+                        w.frameGeometry = {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        };
                         targets.push({ w: w, rect: rect });
                     }
 
                     verifyState(state, targets);
-                } catch (e) {
-                    print(`kwarter: applyState failed: ${e}`);
                 } finally {
                     state.applying = false;
                 }
             }
 
             module.exports = {
-                plainRect,
                 maximizeModeOf,
                 setMaximizeIfNeeded,
                 verifyState,
@@ -1705,36 +1504,32 @@
             const { setApplyHandler } = require("./core/schedule");
 
             function main() {
-                try {
-                    setApplyHandler(applyState);
-                    workspace.windowAdded.connect(onWindowAdded);
-                    workspace.windowRemoved.connect(onWindowRemoved);
-                    workspace.windowActivated.connect(onWindowActivated);
-                    connectSignal(
-                        workspace.currentDesktopChanged,
-                        onCurrentDesktopChanged,
-                        "workspace.currentDesktopChanged"
-                    );
-                    connectSignal(
-                        workspace.currentActivityChanged,
-                        onCurrentActivityChanged,
-                        "workspace.currentActivityChanged"
-                    );
-                    connectSignal(
-                        workspace.desktopsChanged,
-                        onDesktopListChanged,
-                        "workspace.desktopsChanged"
-                    );
-                    connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
-                    for (const output of workspace.screens) {
-                        connectOutputSignals(output);
-                    }
-                    connectDockWindows();
-                    registerAllShortcuts();
-                    replayExistingWindows();
-                } catch (e) {
-                    print(`kwarter: main failed: ${e}`);
+                setApplyHandler(applyState);
+                workspace.windowAdded.connect(onWindowAdded);
+                workspace.windowRemoved.connect(onWindowRemoved);
+                workspace.windowActivated.connect(onWindowActivated);
+                connectSignal(
+                    workspace.currentDesktopChanged,
+                    onCurrentDesktopChanged,
+                    "workspace.currentDesktopChanged"
+                );
+                connectSignal(
+                    workspace.currentActivityChanged,
+                    onCurrentActivityChanged,
+                    "workspace.currentActivityChanged"
+                );
+                connectSignal(
+                    workspace.desktopsChanged,
+                    onDesktopListChanged,
+                    "workspace.desktopsChanged"
+                );
+                connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
+                for (const output of workspace.screens) {
+                    connectOutputSignals(output);
                 }
+                connectDockWindows();
+                registerAllShortcuts();
+                replayExistingWindows();
             }
 
             module.exports = {

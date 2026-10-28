@@ -10,31 +10,11 @@ const {
 const { states, findStateContaining, pruneState } = require("./state");
 const { defer } = require("./timing");
 
-function plainRect(rect) {
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-}
-
 function maximizeModeOf(w) {
-    try {
-        if (typeof w.maximizeMode === "number") {
-            return w.maximizeMode;
-        }
-        if (typeof w.maximizeMode === "function") {
-            return w.maximizeMode();
-        }
-        if (typeof w.maximized === "boolean") {
-            return w.maximized ? 3 : 0;
-        }
-    } catch (e) {
-        print(`kwarter: failed to read maximize state for ${windowId(w)}: ${e}`);
-    }
-    return null;
+    return typeof w.maximizeMode === "number" ? w.maximizeMode : null;
 }
 
 function setMaximizeIfNeeded(w, vertical, horizontal) {
-    if (!w || typeof w.setMaximize !== "function") {
-        return;
-    }
     if (w.fullScreen) {
         return;
     }
@@ -55,19 +35,20 @@ function verifyState(state, targets) {
 
     defer(() => {
         for (const target of targets) {
-            try {
-                const w = target.w;
-                if (!isAlive(w) || w.fullScreen) {
-                    continue;
-                }
-                if (findStateContaining(w) !== state || state.slots.indexOf(w) === -1) {
-                    continue;
-                }
-                if (!rectsClose(w.frameGeometry, target.rect, 1)) {
-                    w.frameGeometry = plainRect(target.rect);
-                }
-            } catch (e) {
-                print(`kwarter: verifyState failed: ${e}`);
+            const w = target.w;
+            if (!isAlive(w) || w.fullScreen) {
+                continue;
+            }
+            if (findStateContaining(w) !== state || state.slots.indexOf(w) === -1) {
+                continue;
+            }
+            if (!rectsClose(w.frameGeometry, target.rect, 1)) {
+                w.frameGeometry = {
+                    x: target.rect.x,
+                    y: target.rect.y,
+                    width: target.rect.width,
+                    height: target.rect.height,
+                };
             }
         }
     });
@@ -134,20 +115,22 @@ function applyState(state) {
             }
             const minSize = w.minSize || { width: 0, height: 0 };
             const rect = fitToMinSize(rects[i], minSize);
-            w.frameGeometry = plainRect(rect);
+            w.frameGeometry = {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+            };
             targets.push({ w: w, rect: rect });
         }
 
         verifyState(state, targets);
-    } catch (e) {
-        print(`kwarter: applyState failed: ${e}`);
     } finally {
         state.applying = false;
     }
 }
 
 module.exports = {
-    plainRect,
     maximizeModeOf,
     setMaximizeIfNeeded,
     verifyState,
