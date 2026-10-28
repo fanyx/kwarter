@@ -155,6 +155,7 @@ function resolveRoot(w) {
 
 const states = {};
 const connectedWindowIds = new Set();
+const connectedOutputNames = new Set();
 const retriedOutput = new Set();
 const generatedIds = new WeakMap();
 let nextGeneratedId = 0;
@@ -184,6 +185,18 @@ function desktopFor(w) {
 
 function isAlive(w) {
     return Boolean(w && !w.deleted && workspace.windowList().indexOf(w) !== -1);
+}
+
+function windowOnActivity(w) {
+    if (!w) {
+        return false;
+    }
+    const activities = w.activities;
+    return (
+        !activities ||
+        activities.length === 0 ||
+        activities.indexOf(workspace.currentActivity) !== -1
+    );
 }
 
 function contains(list, item) {
@@ -337,12 +350,7 @@ function addWindow(w) {
             return;
         }
 
-        const activities = w.activities;
-        if (
-            activities &&
-            activities.length > 0 &&
-            activities.indexOf(workspace.currentActivity) === -1
-        ) {
+        if (!windowOnActivity(w)) {
             return;
         }
 
@@ -778,6 +786,156 @@ function connectSignal(signal, handler) {
     }
 }
 
+function connectOutputSignals(output) {
+    if (!output || !output.name || connectedOutputNames.has(output.name)) {
+        return;
+    }
+    connectedOutputNames.add(output.name);
+    connectSignal(output.geometryChanged, () => onOutputGeometryChanged(output));
+}
+
+function moveWindowBetweenStates(w, oldState) {
+    if (!oldState) {
+        return;
+    }
+    const output = w.output || workspace.activeScreen;
+    const desktop = desktopFor(w);
+    if (!output || !desktop) {
+        return;
+    }
+    if (stateKey(output, desktop) === oldState.key) {
+        return;
+    }
+
+    detachFromState(oldState, w);
+    const state = stateFor(output, desktop);
+    if (w.minimized) {
+        if (state.minimized.indexOf(w) === -1) {
+            state.minimized.push(w);
+        }
+    } else {
+        addToState(state, w);
+    }
+    scheduleApply(oldState);
+    scheduleApply(state);
+}
+
+function onCurrentDesktopChanged() {
+    try {
+        const desktop = workspace.currentDesktop;
+        for (const w of workspace.windowList()) {
+            if (
+                eligible(w) &&
+                desktopFor(w) === desktop &&
+                !findStateContaining(w)
+            ) {
+                addWindow(w);
+            }
+        }
+        for (const key of Object.keys(states)) {
+            if (states[key].desktop === desktop) {
+                scheduleApply(states[key]);
+            }
+        }
+    } catch (e) {
+        print(`quarter-tiler: onCurrentDesktopChanged failed: ${e}`);
+    }
+}
+
+function onCurrentActivityChanged() {
+    try {
+        const affected = [];
+        for (const key of Object.keys(states)) {
+            const state = states[key];
+            const tracked = state.slots.concat(state.minimized, state.lru);
+            let touched = false;
+            for (const w of tracked) {
+                if (!windowOnActivity(w)) {
+                    detachFromState(state, w);
+                    touched = true;
+                }
+            }
+            if (touched) {
+                affected.push(state);
+            }
+        }
+        for (const state of affected) {
+            scheduleApply(state);
+        }
+        for (const w of workspace.windowList()) {
+            if (eligible(w) && windowOnActivity(w) && !findStateContaining(w)) {
+                addWindow(w);
+            }
+        }
+    } catch (e) {
+        print(`quarter-tiler: onCurrentActivityChanged failed: ${e}`);
+    }
+}
+
+function onScreensChanged() {
+    try {
+        for (const output of workspace.screens) {
+            connectOutputSignals(output);
+        }
+        for (const key of Object.keys(states)) {
+            const state = states[key];
+            if (contains(workspace.screens, state.output)) {
+                continue;
+            }
+            const tracked = state.slots.concat(state.minimized, state.lru);
+            for (const w of tracked) {
+                detachFromState(state, w);
+            }
+            delete states[key];
+        }
+        for (const w of workspace.windowList()) {
+            const output = w.output || workspace.activeScreen;
+            if (
+                eligible(w) &&
+                output &&
+                contains(workspace.screens, output) &&
+                !findStateContaining(w)
+            ) {
+                addWindow(w);
+            }
+        }
+        for (const key of Object.keys(states)) {
+            scheduleApply(states[key]);
+        }
+    } catch (e) {
+        print(`quarter-tiler: onScreensChanged failed: ${e}`);
+    }
+}
+
+function onOutputGeometryChanged(output) {
+    try {
+        for (const key of Object.keys(states)) {
+            const state = states[key];
+            if (state.output === output) {
+                scheduleApply(state);
+            }
+        }
+    } catch (e) {
+        print(`quarter-tiler: onOutputGeometryChanged failed: ${e}`);
+    }
+}
+
+function onDesktopsChanged(w) {
+    try {
+        moveWindowBetweenStates(w, findStateContaining(w));
+    } catch (e) {
+        print(`quarter-tiler: onDesktopsChanged failed: ${e}`);
+    }
+}
+
+function onOutputChanged(w) {
+    try {
+        moveWindowBetweenStates(w, findStateContaining(w));
+    } catch (e) {
+        print(`quarter-tiler: onOutputChanged failed: ${e}`);
+    }
+}
+
 function connectWindowSignals(w) {
     const id = windowId(w);
     if (connectedWindowIds.has(id)) {
@@ -794,6 +952,8 @@ function connectWindowSignals(w) {
     connectSignal(w.interactiveMoveResizeFinished, () =>
         onInteractiveMoveResizeFinished(w)
     );
+    connectSignal(w.desktopsChanged, () => onDesktopsChanged(w));
+    connectSignal(w.outputChanged, () => onOutputChanged(w));
 }
 
 function onWindowAdded(w) {
@@ -909,6 +1069,12 @@ function main() {
         workspace.windowAdded.connect(onWindowAdded);
         workspace.windowRemoved.connect(onWindowRemoved);
         workspace.windowActivated.connect(onWindowActivated);
+        connectSignal(workspace.currentDesktopChanged, onCurrentDesktopChanged);
+        connectSignal(workspace.currentActivityChanged, onCurrentActivityChanged);
+        connectSignal(workspace.screensChanged, onScreensChanged);
+        for (const output of workspace.screens) {
+            connectOutputSignals(output);
+        }
         registerAllShortcuts();
         replayExistingWindows();
     } catch (e) {
@@ -950,6 +1116,14 @@ if (typeof module !== "undefined" && module.exports) {
         isAlive,
         windowId,
         desktopFor,
+        windowOnActivity,
+        connectOutputSignals,
+        onCurrentDesktopChanged,
+        onCurrentActivityChanged,
+        onScreensChanged,
+        onOutputGeometryChanged,
+        onDesktopsChanged,
+        onOutputChanged,
         replayExistingWindows,
         main,
     };
