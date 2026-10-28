@@ -6,15 +6,13 @@ const {
     slotRects,
     directionalTarget,
     chooseVictimIndex,
-    chooseVictim,
     swapSlots,
     fitToMinSize,
     rectsClose,
-    eligible,
-    stateKey,
-    resolveRoot,
-    main,
-} = require("../contents/code/main.js");
+} = require("../src/core/layout.js");
+const { eligible, stateKey, resolveRoot } = require("../src/core/windows.js");
+const { chooseVictim } = require("../src/core/state.js");
+const { main } = require("../src/bootstrap.js");
 
 const AREA = { x: 0, y: 0, width: 1000, height: 800 };
 
