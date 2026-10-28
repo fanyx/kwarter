@@ -153,7 +153,7 @@
         "src/core/windows.js": function (module, exports, require) {
             "use strict";
 
-            const { warnedTileIds } = require("./registry");
+            const { warnedTileIds } = require("src/core/registry.js");
 
             function windowId(w) {
                 return w && w.internalId !== undefined && w.internalId !== null
@@ -304,7 +304,7 @@
         "src/core/schedule.js": function (module, exports, require) {
             "use strict";
 
-            const { defer } = require("./timing");
+            const { defer } = require("src/core/timing.js");
 
             let applyHandler = null;
 
@@ -333,7 +333,7 @@
         "src/core/state.js": function (module, exports, require) {
             "use strict";
 
-            const { MAX_WINDOWS, chooseVictimIndex } = require("./layout");
+            const { MAX_WINDOWS, chooseVictimIndex } = require("src/core/layout.js");
             const {
                 isAlive,
                 windowId,
@@ -343,9 +343,9 @@
                 resolveRoot,
                 eligible,
                 stateKey,
-            } = require("./windows");
-            const { connectedWindowIds } = require("./registry");
-            const { scheduleApply } = require("./schedule");
+            } = require("src/core/windows.js");
+            const { connectedWindowIds } = require("src/core/registry.js");
+            const { scheduleApply } = require("src/core/schedule.js");
 
             const states = {};
 
@@ -512,7 +512,7 @@
                 addToState,
                 detachFromState,
                 touch,
-            } = require("../core/state");
+            } = require("src/core/state.js");
             const {
                 eligible,
                 desktopFor,
@@ -522,14 +522,14 @@
                 isAlive,
                 windowOnActivity,
                 detachNativeTile,
-            } = require("../core/windows");
+            } = require("src/core/windows.js");
             const {
                 retriedOutput,
                 connectedWindowIds,
                 connectedDockIds,
-            } = require("../core/registry");
-            const { scheduleApply } = require("../core/schedule");
-            const { defer } = require("../core/timing");
+            } = require("src/core/registry.js");
+            const { scheduleApply } = require("src/core/schedule.js");
+            const { defer } = require("src/core/timing.js");
 
             let windowConnector = null;
 
@@ -645,16 +645,16 @@
         "src/actions/drag.js": function (module, exports, require) {
             "use strict";
 
-            const { swapSlots } = require("../core/layout");
+            const { swapSlots } = require("src/core/layout.js");
             const {
                 findStateContaining,
                 detachFromState,
                 stateFor,
                 addToState,
-            } = require("../core/state");
-            const { isAlive, desktopFor } = require("../core/windows");
-            const { scheduleApply } = require("../core/schedule");
-            const { defer } = require("../core/timing");
+            } = require("src/core/state.js");
+            const { isAlive, desktopFor } = require("src/core/windows.js");
+            const { scheduleApply } = require("src/core/schedule.js");
+            const { defer } = require("src/core/timing.js");
 
             let activeDrag = null;
             let pendingDrop = null;
@@ -781,7 +781,7 @@
                 detachFromState,
                 stateFor,
                 addToState,
-            } = require("../core/state");
+            } = require("src/core/state.js");
             const {
                 windowId,
                 resolveOutput,
@@ -791,15 +791,15 @@
                 stateKey,
                 windowOnActivity,
                 contains,
-            } = require("../core/windows");
+            } = require("src/core/windows.js");
             const {
                 connectedOutputs,
                 connectedDockIds,
                 warnedSignals,
-            } = require("../core/registry");
-            const { scheduleApply } = require("../core/schedule");
-            const { addWindow } = require("../actions/lifecycle");
-            const { isDragOwned } = require("../actions/drag");
+            } = require("src/core/registry.js");
+            const { scheduleApply } = require("src/core/schedule.js");
+            const { addWindow } = require("src/actions/lifecycle.js");
+            const { isDragOwned } = require("src/actions/drag.js");
 
             const outputHandlers = new Map();
 
@@ -1076,33 +1076,33 @@
                 detachFromState,
                 touch,
                 addToState,
-            } = require("../core/state");
+            } = require("src/core/state.js");
             const {
                 windowId,
                 resolveRoot,
                 eligible,
                 windowOnActivity,
-            } = require("../core/windows");
-            const { connectedWindowIds } = require("../core/registry");
-            const { scheduleApply } = require("../core/schedule");
-            const { defer } = require("../core/timing");
+            } = require("src/core/windows.js");
+            const { connectedWindowIds } = require("src/core/registry.js");
+            const { scheduleApply } = require("src/core/schedule.js");
+            const { defer } = require("src/core/timing.js");
             const {
                 addWindow,
                 removeWindow,
                 setWindowConnector,
-            } = require("../actions/lifecycle");
+            } = require("src/actions/lifecycle.js");
             const {
                 onInteractiveMoveResizeStarted,
                 onInteractiveMoveResizeFinished,
                 isDragOwned,
-            } = require("../actions/drag");
+            } = require("src/actions/drag.js");
             const {
                 connectSignal,
                 isDockWindow,
                 connectDockSignals,
                 onDesktopsChanged,
                 onOutputChanged,
-            } = require("./workspace");
+            } = require("src/signals/workspace.js");
 
             function connectWindowSignals(w) {
                 const id = windowId(w);
@@ -1246,10 +1246,10 @@
         "src/actions/swap.js": function (module, exports, require) {
             "use strict";
 
-            const { GAP, slotRects, directionalTarget, swapSlots } = require("../core/layout");
-            const { findStateContaining } = require("../core/state");
-            const { resolveRoot } = require("../core/windows");
-            const { scheduleApply } = require("../core/schedule");
+            const { GAP, slotRects, directionalTarget, swapSlots } = require("src/core/layout.js");
+            const { findStateContaining } = require("src/core/state.js");
+            const { resolveRoot } = require("src/core/windows.js");
+            const { scheduleApply } = require("src/core/schedule.js");
 
             function swapDirection(dx, dy) {
                 const activeWindow = workspace.activeWindow;
@@ -1301,7 +1301,7 @@
         "src/shortcuts.js": function (module, exports, require) {
             "use strict";
 
-            const { swapDirection } = require("./actions/swap");
+            const { swapDirection } = require("src/actions/swap.js");
 
             function registerShortcutLogged(title, text, sequence, callback) {
                 if (!registerShortcut(title, text, sequence, callback)) {
@@ -1344,15 +1344,15 @@
         "src/core/apply.js": function (module, exports, require) {
             "use strict";
 
-            const { GAP, slotRects, fitToMinSize, rectsClose } = require("./layout");
+            const { GAP, slotRects, fitToMinSize, rectsClose } = require("src/core/layout.js");
             const {
                 isAlive,
                 windowId,
                 detachNativeTile,
                 contains,
-            } = require("./windows");
-            const { states, findStateContaining, pruneState } = require("./state");
-            const { defer } = require("./timing");
+            } = require("src/core/windows.js");
+            const { states, findStateContaining, pruneState } = require("src/core/state.js");
+            const { defer } = require("src/core/timing.js");
 
             function maximizeModeOf(w) {
                 return typeof w.maximizeMode === "number" ? w.maximizeMode : null;
@@ -1488,7 +1488,7 @@
                 onWindowAdded,
                 onWindowRemoved,
                 onWindowActivated,
-            } = require("./signals/window");
+            } = require("src/signals/window.js");
             const {
                 connectSignal,
                 connectOutputSignals,
@@ -1497,11 +1497,11 @@
                 onDesktopListChanged,
                 onCurrentActivityChanged,
                 onScreensChanged,
-            } = require("./signals/workspace");
-            const { registerAllShortcuts } = require("./shortcuts");
-            const { replayExistingWindows } = require("./actions/lifecycle");
-            const { applyState } = require("./core/apply");
-            const { setApplyHandler } = require("./core/schedule");
+            } = require("src/signals/workspace.js");
+            const { registerAllShortcuts } = require("src/shortcuts.js");
+            const { replayExistingWindows } = require("src/actions/lifecycle.js");
+            const { applyState } = require("src/core/apply.js");
+            const { setApplyHandler } = require("src/core/schedule.js");
 
             function main() {
                 setApplyHandler(applyState);
@@ -1537,36 +1537,11 @@
             };
         },
         "src/index.js": function (module, exports, require) {
-            require("./bootstrap").main();
+            require("src/bootstrap.js").main();
         },
     };
 
     var cache = {};
-
-    function resolve(from, spec) {
-        if (spec.charAt(0) !== ".") {
-            throw new Error("kwarter: only relative requires are supported: " + spec);
-        }
-        var base = from.split("/");
-        base.pop();
-        var parts = spec.split("/");
-        for (var i = 0; i < parts.length; i++) {
-            var part = parts[i];
-            if (!part || part === ".") {
-                continue;
-            }
-            if (part === "..") {
-                base.pop();
-            } else {
-                base.push(part);
-            }
-        }
-        var id = base.join("/");
-        if (!/\.js$/.test(id)) {
-            id += ".js";
-        }
-        return id;
-    }
 
     function load(id) {
         if (cache[id]) {
@@ -1578,9 +1553,7 @@
         }
         var module = { exports: {} };
         cache[id] = module;
-        factory(module, module.exports, function (spec) {
-            return load(resolve(id, spec));
-        });
+        factory(module, module.exports, load);
         return module.exports;
     }
 

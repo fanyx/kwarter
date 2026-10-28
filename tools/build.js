@@ -55,10 +55,19 @@ function indent(text, spaces) {
         .join("\n");
 }
 
+function rewriteRequires(id, source) {
+    return source.replace(REQUIRE_RE, (match, quote, spec) => {
+        return `require(${JSON.stringify(resolveRelative(id, spec))})`;
+    });
+}
+
 function renderModules(order) {
     const parts = [];
     for (const id of order) {
-        const source = fs.readFileSync(path.join(ROOT, id), "utf8").replace(/\s+$/, "");
+        const source = rewriteRequires(
+            id,
+            fs.readFileSync(path.join(ROOT, id), "utf8").replace(/\s+$/, "")
+        );
         parts.push(
             `        ${JSON.stringify(id)}: function (module, exports, require) {\n` +
             `${indent(source, 12)}\n` +
@@ -84,31 +93,6 @@ function bundle() {
         "\n" +
         "    var cache = {};\n" +
         "\n" +
-        "    function resolve(from, spec) {\n" +
-        '        if (spec.charAt(0) !== ".") {\n' +
-        '            throw new Error("kwarter: only relative requires are supported: " + spec);\n' +
-        "        }\n" +
-        '        var base = from.split("/");\n' +
-        "        base.pop();\n" +
-        '        var parts = spec.split("/");\n' +
-        "        for (var i = 0; i < parts.length; i++) {\n" +
-        "            var part = parts[i];\n" +
-        '            if (!part || part === ".") {\n' +
-        "                continue;\n" +
-        "            }\n" +
-        '            if (part === "..") {\n' +
-        "                base.pop();\n" +
-        "            } else {\n" +
-        "                base.push(part);\n" +
-        "            }\n" +
-        "        }\n" +
-        '        var id = base.join("/");\n' +
-        '        if (!/\\.js$/.test(id)) {\n' +
-        '            id += ".js";\n' +
-        "        }\n" +
-        "        return id;\n" +
-        "    }\n" +
-        "\n" +
         "    function load(id) {\n" +
         "        if (cache[id]) {\n" +
         "            return cache[id].exports;\n" +
@@ -119,9 +103,7 @@ function bundle() {
         "        }\n" +
         "        var module = { exports: {} };\n" +
         "        cache[id] = module;\n" +
-        "        factory(module, module.exports, function (spec) {\n" +
-        "            return load(resolve(id, spec));\n" +
-        "        });\n" +
+        "        factory(module, module.exports, load);\n" +
         "        return module.exports;\n" +
         "    }\n" +
         "\n" +
