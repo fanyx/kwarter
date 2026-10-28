@@ -570,9 +570,11 @@ If the active output disappears, windows KWin migrates to a remaining output are
 
 State is keyed by output name and virtual desktop ID. A window's desktop is taken from `w.desktops[0]` when present, otherwise from `workspace.currentDesktop`.
 
-When `currentDesktopChanged` fires, the script adapts any untracked eligible windows on the target desktop through the normal add path, then applies the state for that desktop. It does not touch states belonging to other desktops. When a window's `desktopsChanged` signal fires, the script removes it from its old desktop state and adds it to the new one, reflowing both.
+When `currentDesktopChanged(previous, current, output)` fires, the script resolves the affected output and its target desktop. It adopts untracked eligible windows on that output and desktop, then applies only that output's state for the target desktop. States on other outputs and desktops are not touched. When a window's `desktopsChanged` signal fires, the script removes it from its old desktop state and adds it to the new one, reflowing both.
 
-Plasma 6.7 introduced per-output virtual desktops. The design uses the window's own desktop, taken from `w.desktops[0]`, for its state. The global `workspace.currentDesktop` is only a fallback when the window reports no desktop. If per-output desktop switching leaves an untracked window on an output, the next `currentDesktopChanged` or `windowAdded` event adopts it.
+Plasma 6.7 introduced per-output virtual desktops. `currentDesktopFor(output)` uses `workspace.currentDesktopForScreen(output)` when available and falls back to `workspace.currentDesktop`. Replay and desktop-switch adoption use the per-output desktop, so each output tracks its own current desktop. A window's state still comes from its own `w.desktops[0]`.
+
+When `workspace.desktopsChanged` fires, states whose desktop no longer exists are detached and deleted. Windows on the remaining current desktops are re-adopted, then the remaining states are re-applied.
 
 A window on multiple virtual desktops but not on all desktops is assigned to the first desktop in its `desktops` array. Sticky windows are excluded by eligibility.
 
