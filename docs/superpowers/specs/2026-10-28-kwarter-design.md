@@ -1,4 +1,4 @@
-# Automatic Quarter Tiling for KWin 6 — Design Document
+# Kwarter — Design Document
 
 - Date: 2026-10-28
 - Status: Design approved; awaiting written-spec review
@@ -124,14 +124,15 @@ Alternatives considered:
 ### 5.2 Package structure
 
 ```
-quarter-tiler/
+.
 ├── metadata.json
 ├── contents/
 │   └── code/
 │       └── main.js
 ├── tests/
 │   └── layout.test.js
-└── README.md
+├── README.md
+└── docs/
 ```
 
 KWin's JavaScript API loads exactly one entry file and provides no `include` or module loader. `main.js` therefore contains both the pure layout functions and the KWin wiring. Pure functions are defined at the top; signal wiring, state, lifecycle, shortcuts, drag handling, and geometry application follow.
@@ -421,10 +422,10 @@ If a window cannot be adopted because its output or desktop is not available yet
 The script registers four global shortcuts:
 
 ```js
-registerShortcut("Quarter Tiler: Swap Left",  "Swap window left",  "Meta+Left",  () => swapDirection(-1, 0));
-registerShortcut("Quarter Tiler: Swap Right", "Swap window right", "Meta+Right", () => swapDirection(1, 0));
-registerShortcut("Quarter Tiler: Swap Up",    "Swap window up",    "Meta+Up",    () => swapDirection(0, -1));
-registerShortcut("Quarter Tiler: Swap Down",  "Swap window down",  "Meta+Down",  () => swapDirection(0, 1));
+registerShortcut("Kwarter: Swap Left",  "Swap window left",  "Meta+Left",  () => swapDirection(-1, 0));
+registerShortcut("Kwarter: Swap Right", "Swap window right", "Meta+Right", () => swapDirection(1, 0));
+registerShortcut("Kwarter: Swap Up",    "Swap window up",    "Meta+Up",    () => swapDirection(0, -1));
+registerShortcut("Kwarter: Swap Down",  "Swap window down",  "Meta+Down",  () => swapDirection(0, 1));
 ```
 
 KWin already binds `Meta+Arrow` to quick tiling. The installation documentation tells the user to clear the built-in Quick Tile Left/Right/Top/Bottom shortcuts in System Settings and to disable drag-to-edge quick tiling. The script does not attempt to modify KWin's shortcut configuration itself.
@@ -629,10 +630,10 @@ If drag signals do not fire reliably, the drag-swap feature is disabled and the 
 ```json
 {
     "KPlugin": {
-        "Name": "Quarter Tiler",
+        "Name": "Kwarter",
         "Description": "Automatic quarter tiling for up to four windows per screen",
         "Icon": "preferences-system-windows",
-        "Id": "quarter-tiler",
+        "Id": "kwarter",
         "Version": "1.0.0",
         "License": "GPL-3.0-or-later"
     },
@@ -645,8 +646,8 @@ If drag signals do not fire reliably, the drag-swap feature is disabled and the 
 Install and enable:
 
 ```bash
-kpackagetool6 --type=KWin/Script -i ./quarter-tiler
-kwriteconfig6 --file kwinrc --group Plugins --key quarter-tilerEnabled true
+kpackagetool6 --type=KWin/Script -i .
+kwriteconfig6 --file kwinrc --group Plugins --key kwarterEnabled true
 qdbus6 org.kde.KWin /KWin reconfigure
 ```
 

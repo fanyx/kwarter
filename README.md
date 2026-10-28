@@ -1,6 +1,6 @@
-# Quarter Tiler
+# Kwarter
 
-Automatic quarter tiling for KWin 6. Quarter Tiler keeps up to four normal
+Automatic quarter tiling for KWin 6. Kwarter keeps up to four normal
 application windows tiled on each screen. It is a zero-configuration script:
 there is no settings page, no config file, and no build step.
 
@@ -20,8 +20,8 @@ does not survive a KWin restart or login.
 From the repository root:
 
 ```bash
-kpackagetool6 --type=KWin/Script -i ./quarter-tiler
-kwriteconfig6 --file kwinrc --group Plugins --key quarter-tilerEnabled true
+kpackagetool6 --type=KWin/Script -i .
+kwriteconfig6 --file kwinrc --group Plugins --key kwarterEnabled true
 qdbus6 org.kde.KWin /KWin reconfigure
 ```
 
@@ -36,7 +36,7 @@ If the script is already installed and you want to replace it, use
 `-u` (upgrade) instead of `-i`:
 
 ```bash
-kpackagetool6 --type=KWin/Script -u ./quarter-tiler
+kpackagetool6 --type=KWin/Script -u .
 ```
 
 After changing the code, reinstall the package, then re-enable the script or
@@ -48,7 +48,7 @@ The `kwriteconfig6` command above enables the script. You can also enable it
 in System Settings:
 
 1. Open **System Settings > Window Management > KWin Scripts**.
-2. Find **Quarter Tiler** in the list.
+2. Find **Kwarter** in the list.
 3. Tick its checkbox and click **Apply**.
 
 Disabling and re-enabling the script replays the existing windows through the
@@ -58,7 +58,7 @@ normal add path. If more than four eligible windows are open, the oldest
 ## Clear KWin's built-in Quick Tile shortcuts
 
 KWin binds `Meta+Left`, `Meta+Right`, `Meta+Up`, and `Meta+Down` to its own
-Quick Tile actions. Quarter Tiler uses the same keys for swapping, so clear
+Quick Tile actions. Kwarter uses the same keys for swapping, so clear
 the built-in bindings first:
 
 1. Open **System Settings > Keyboard > Shortcuts**.
@@ -69,10 +69,10 @@ the built-in bindings first:
 
 The script registers these four actions:
 
-- **Quarter Tiler: Swap Left** - `Meta+Left`
-- **Quarter Tiler: Swap Right** - `Meta+Right`
-- **Quarter Tiler: Swap Up** - `Meta+Up`
-- **Quarter Tiler: Swap Down** - `Meta+Down`
+- **Kwarter: Swap Left** - `Meta+Left`
+- **Kwarter: Swap Right** - `Meta+Right`
+- **Kwarter: Swap Up** - `Meta+Up`
+- **Kwarter: Swap Down** - `Meta+Down`
 
 If a shortcut fails to register (for example because another action already
 owns the key), the script logs the failure. Assign the action manually under
@@ -81,13 +81,13 @@ owns the key), the script logs the failure. Assign the action manually under
 ## Disable drag-to-edge quick tiling
 
 KWin's drag-to-edge quick tiling fights the tiler: it can move or maximize a
-window before Quarter Tiler's drop handler runs. Turn it off:
+window before Kwarter's drop handler runs. Turn it off:
 
 1. Open **System Settings > Window Management > Window Behavior > Moving**.
 2. Set **Drag windows to screen edges to tile** (or the equivalent quick
    tiling option) to **Disabled** / **No**.
 
-Quarter Tiler treats its own snap-back and swap as authoritative, so edge
+Kwarter treats its own snap-back and swap as authoritative, so edge
 tiling does not corrupt the layout, but disabling it gives predictable drag
 behavior.
 
@@ -199,13 +199,13 @@ and no npm packages are required.
 From the repository root:
 
 ```bash
-node --test quarter-tiler/tests/layout.test.js quarter-tiler/tests/runtime.test.js
+node --test tests/layout.test.js tests/runtime.test.js
 ```
 
 Optional syntax check:
 
 ```bash
-node --check quarter-tiler/contents/code/main.js
+node --check contents/code/main.js
 ```
 
 To follow the installed script's log output:

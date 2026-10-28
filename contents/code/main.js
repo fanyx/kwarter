@@ -398,7 +398,7 @@ function detachNativeTile(w) {
             const id = windowId(w);
             if (!warnedTileIds.has(id)) {
                 warnedTileIds.add(id);
-                print(`quarter-tiler: native tile still attached for ${id}`);
+                print(`kwarter: native tile still attached for ${id}`);
             }
             return false;
         }
@@ -407,7 +407,7 @@ function detachNativeTile(w) {
         const id = windowId(w);
         if (!warnedTileIds.has(id)) {
             warnedTileIds.add(id);
-            print(`quarter-tiler: failed to detach native tile for ${id}: ${e}`);
+            print(`kwarter: failed to detach native tile for ${id}: ${e}`);
         }
         return false;
     }
@@ -460,7 +460,7 @@ function addWindow(w) {
         addToState(state, w);
         scheduleApply(state);
     } catch (e) {
-        print(`quarter-tiler: addWindow failed: ${e}`);
+        print(`kwarter: addWindow failed: ${e}`);
     }
 }
 
@@ -498,11 +498,11 @@ function removeWindow(w) {
             try {
                 workspace.activeWindow = restored;
             } catch (e) {
-                print(`quarter-tiler: failed to activate restored window ${windowId(restored)}: ${e}`);
+                print(`kwarter: failed to activate restored window ${windowId(restored)}: ${e}`);
             }
         }
     } catch (e) {
-        print(`quarter-tiler: removeWindow failed: ${e}`);
+        print(`kwarter: removeWindow failed: ${e}`);
     }
 }
 
@@ -552,7 +552,7 @@ function maximizeModeOf(w) {
             return w.maximized ? 3 : 0;
         }
     } catch (e) {
-        print(`quarter-tiler: failed to read maximize state for ${windowId(w)}: ${e}`);
+        print(`kwarter: failed to read maximize state for ${windowId(w)}: ${e}`);
     }
     return null;
 }
@@ -593,7 +593,7 @@ function verifyState(state, targets) {
                     w.frameGeometry = plainRect(target.rect);
                 }
             } catch (e) {
-                print(`quarter-tiler: verifyState failed: ${e}`);
+                print(`kwarter: verifyState failed: ${e}`);
             }
         }
     });
@@ -625,7 +625,7 @@ function applyState(state) {
 
         const area = workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop);
         if (!area || area.width <= 0 || area.height <= 0) {
-            print("quarter-tiler: empty work area, skipping apply");
+            print("kwarter: empty work area, skipping apply");
             return;
         }
 
@@ -666,7 +666,7 @@ function applyState(state) {
 
         verifyState(state, targets);
     } catch (e) {
-        print(`quarter-tiler: applyState failed: ${e}`);
+        print(`kwarter: applyState failed: ${e}`);
     } finally {
         state.applying = false;
     }
@@ -698,7 +698,7 @@ function swapDirection(dx, dy) {
 
         const area = workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop);
         if (!area || area.width <= 0 || area.height <= 0) {
-            print("quarter-tiler: empty work area, skipping swap");
+            print("kwarter: empty work area, skipping swap");
             return;
         }
 
@@ -715,41 +715,41 @@ function swapDirection(dx, dy) {
             workspace.activeWindow = root;
         }
     } catch (e) {
-        print(`quarter-tiler: swapDirection failed: ${e}`);
+        print(`kwarter: swapDirection failed: ${e}`);
     }
 }
 
 function registerShortcutLogged(title, text, sequence, callback) {
     try {
         if (!registerShortcut(title, text, sequence, callback)) {
-            print(`quarter-tiler: failed to register shortcut "${title}" (${sequence})`);
+            print(`kwarter: failed to register shortcut "${title}" (${sequence})`);
         }
     } catch (e) {
-        print(`quarter-tiler: failed to register shortcut "${title}" (${sequence}): ${e}`);
+        print(`kwarter: failed to register shortcut "${title}" (${sequence}): ${e}`);
     }
 }
 
 function registerAllShortcuts() {
     registerShortcutLogged(
-        "Quarter Tiler: Swap Left",
+        "Kwarter: Swap Left",
         "Swap window left",
         "Meta+Left",
         () => swapDirection(-1, 0)
     );
     registerShortcutLogged(
-        "Quarter Tiler: Swap Right",
+        "Kwarter: Swap Right",
         "Swap window right",
         "Meta+Right",
         () => swapDirection(1, 0)
     );
     registerShortcutLogged(
-        "Quarter Tiler: Swap Up",
+        "Kwarter: Swap Up",
         "Swap window up",
         "Meta+Up",
         () => swapDirection(0, -1)
     );
     registerShortcutLogged(
-        "Quarter Tiler: Swap Down",
+        "Kwarter: Swap Down",
         "Swap window down",
         "Meta+Down",
         () => swapDirection(0, 1)
@@ -773,7 +773,7 @@ function onInteractiveMoveResizeStarted(w) {
         }
         activeDrag = { window: w, resizing: dragIsResize(w) };
     } catch (e) {
-        print(`quarter-tiler: onInteractiveMoveResizeStarted failed: ${e}`);
+        print(`kwarter: onInteractiveMoveResizeStarted failed: ${e}`);
     }
 }
 
@@ -790,7 +790,7 @@ function onInteractiveMoveResizeFinished(w) {
             try {
                 handleDrop(w, resizing);
             } catch (e) {
-                print(`quarter-tiler: deferred drop failed: ${e}`);
+                print(`kwarter: deferred drop failed: ${e}`);
             } finally {
                 if (pendingDrop && pendingDrop.window === w) {
                     pendingDrop = null;
@@ -798,7 +798,7 @@ function onInteractiveMoveResizeFinished(w) {
             }
         });
     } catch (e) {
-        print(`quarter-tiler: onInteractiveMoveResizeFinished failed: ${e}`);
+        print(`kwarter: onInteractiveMoveResizeFinished failed: ${e}`);
     }
 }
 
@@ -873,7 +873,7 @@ function handleDrop(w, resizing) {
 
         scheduleApply(source);
     } catch (e) {
-        print(`quarter-tiler: handleDrop failed: ${e}`);
+        print(`kwarter: handleDrop failed: ${e}`);
     }
 }
 
@@ -885,7 +885,7 @@ function connectSignal(signal, handler, name) {
     const label = name || "signal";
     if (!warnedSignals.has(label)) {
         warnedSignals.add(label);
-        print(`quarter-tiler: missing optional signal or feature: ${label}`);
+        print(`kwarter: missing optional signal or feature: ${label}`);
     }
     return false;
 }
@@ -920,7 +920,7 @@ function onDockGeometryChanged(w) {
             }
         }
     } catch (e) {
-        print(`quarter-tiler: onDockGeometryChanged failed: ${e}`);
+        print(`kwarter: onDockGeometryChanged failed: ${e}`);
     }
 }
 
@@ -932,7 +932,7 @@ function connectDockWindows() {
             }
         }
     } catch (e) {
-        print(`quarter-tiler: connectDockWindows failed: ${e}`);
+        print(`kwarter: connectDockWindows failed: ${e}`);
     }
 }
 
@@ -992,7 +992,7 @@ function onCurrentDesktopChanged() {
             }
         }
     } catch (e) {
-        print(`quarter-tiler: onCurrentDesktopChanged failed: ${e}`);
+        print(`kwarter: onCurrentDesktopChanged failed: ${e}`);
     }
 }
 
@@ -1024,7 +1024,7 @@ function onCurrentActivityChanged() {
             }
         }
     } catch (e) {
-        print(`quarter-tiler: onCurrentActivityChanged failed: ${e}`);
+        print(`kwarter: onCurrentActivityChanged failed: ${e}`);
     }
 }
 
@@ -1060,7 +1060,7 @@ function onScreensChanged() {
             scheduleApply(states[key]);
         }
     } catch (e) {
-        print(`quarter-tiler: onScreensChanged failed: ${e}`);
+        print(`kwarter: onScreensChanged failed: ${e}`);
     }
 }
 
@@ -1073,7 +1073,7 @@ function onOutputGeometryChanged(output) {
             }
         }
     } catch (e) {
-        print(`quarter-tiler: onOutputGeometryChanged failed: ${e}`);
+        print(`kwarter: onOutputGeometryChanged failed: ${e}`);
     }
 }
 
@@ -1099,7 +1099,7 @@ function onDesktopsChanged(w) {
         }
         moveWindowBetweenStates(w, state);
     } catch (e) {
-        print(`quarter-tiler: onDesktopsChanged failed: ${e}`);
+        print(`kwarter: onDesktopsChanged failed: ${e}`);
     }
 }
 
@@ -1115,7 +1115,7 @@ function onOutputChanged(w) {
         }
         moveWindowBetweenStates(w, state);
     } catch (e) {
-        print(`quarter-tiler: onOutputChanged failed: ${e}`);
+        print(`kwarter: onOutputChanged failed: ${e}`);
     }
 }
 
@@ -1154,11 +1154,11 @@ function onWindowAdded(w) {
             try {
                 addWindow(w);
             } catch (e) {
-                print(`quarter-tiler: deferred add failed: ${e}`);
+                print(`kwarter: deferred add failed: ${e}`);
             }
         });
     } catch (e) {
-        print(`quarter-tiler: onWindowAdded failed: ${e}`);
+        print(`kwarter: onWindowAdded failed: ${e}`);
     }
 }
 
@@ -1166,7 +1166,7 @@ function onWindowRemoved(w) {
     try {
         removeWindow(w);
     } catch (e) {
-        print(`quarter-tiler: onWindowRemoved failed: ${e}`);
+        print(`kwarter: onWindowRemoved failed: ${e}`);
     }
 }
 
@@ -1178,7 +1178,7 @@ function onWindowActivated(w) {
             touch(state, root);
         }
     } catch (e) {
-        print(`quarter-tiler: onWindowActivated failed: ${e}`);
+        print(`kwarter: onWindowActivated failed: ${e}`);
     }
 }
 
@@ -1207,7 +1207,7 @@ function onActivitiesChanged(w) {
             scheduleApply(state);
         }
     } catch (e) {
-        print(`quarter-tiler: onActivitiesChanged failed: ${e}`);
+        print(`kwarter: onActivitiesChanged failed: ${e}`);
     }
 }
 
@@ -1241,7 +1241,7 @@ function onMinimizedChanged(w) {
         addToState(state, w);
         scheduleApply(state);
     } catch (e) {
-        print(`quarter-tiler: onMinimizedChanged failed: ${e}`);
+        print(`kwarter: onMinimizedChanged failed: ${e}`);
     }
 }
 
@@ -1262,7 +1262,7 @@ function onFullScreenChanged(w) {
             addWindow(w);
         }
     } catch (e) {
-        print(`quarter-tiler: onFullScreenChanged failed: ${e}`);
+        print(`kwarter: onFullScreenChanged failed: ${e}`);
     }
 }
 
@@ -1273,7 +1273,7 @@ function onMaximizedChanged(w) {
             scheduleApply(state);
         }
     } catch (e) {
-        print(`quarter-tiler: onMaximizedChanged failed: ${e}`);
+        print(`kwarter: onMaximizedChanged failed: ${e}`);
     }
 }
 
@@ -1289,7 +1289,7 @@ function replayExistingWindows() {
             addWindow(w);
         }
     } catch (e) {
-        print(`quarter-tiler: replayExistingWindows failed: ${e}`);
+        print(`kwarter: replayExistingWindows failed: ${e}`);
     }
 }
 
@@ -1316,7 +1316,7 @@ function main() {
         registerAllShortcuts();
         replayExistingWindows();
     } catch (e) {
-        print(`quarter-tiler: main failed: ${e}`);
+        print(`kwarter: main failed: ${e}`);
     }
 }
 

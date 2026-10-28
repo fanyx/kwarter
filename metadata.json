@@ -1,9 +1,9 @@
 {
     "KPlugin": {
-        "Name": "Quarter Tiler",
+        "Name": "Kwarter",
         "Description": "Automatic quarter tiling for up to four windows per screen",
         "Icon": "preferences-system-windows",
-        "Id": "quarter-tiler",
+        "Id": "kwarter",
         "Version": "1.0.0",
         "License": "GPL-3.0-or-later"
     },
