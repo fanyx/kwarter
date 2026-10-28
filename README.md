@@ -222,7 +222,9 @@ window is not tiled until it leaves fullscreen.
   keyed per output and virtual desktop.
 - Sticky windows, panels, docks, tooltips, notifications, dialogs, popups,
   and other transient or special windows are never tiled or counted.
-- A slot rectangle smaller than a window's minimum size is clamped to the minimum, so the window may overlap the gap.
+- A slot rectangle smaller than a window's minimum size is clamped to the
+  minimum, so the window may overlap the gap or extend past the work area when
+  its minimum size is very large.
 - Enabling or re-enabling the script with more than four eligible windows
   minimizes the oldest windows during replay.
 - Automated tests cover pure layout math, eligibility, victim selection and
