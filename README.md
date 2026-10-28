@@ -8,6 +8,7 @@ The runtime that KWin loads is the single generated file
 `contents/code/main.js`. Its source lives in focused CommonJS modules under
 `src/`, and `tools/build.js` bundles them into that runtime file. KWin cannot
 load included or required files, so the bundle is the only runtime artifact.
+The bundle is generated, untracked, and rebuilt by `just build`.
 
 ## Requirements
 
@@ -58,9 +59,15 @@ Edit `src/` and rebuild; do not edit the runtime file by hand.
 From the repository root:
 
 ```bash
-kpackagetool6 --type=KWin/Script -i .
+just install
 kwriteconfig6 --file kwinrc --group Plugins --key kwarterEnabled true
-qdbus6 org.kde.KWin /KWin reconfigure
+```
+
+`just install` builds `contents/code/main.js`, installs the package, and
+reconfigures KWin. Upgrade an existing install with:
+
+```bash
+just upgrade
 ```
 
 If `qdbus6` is not installed, use `qdbus` or `dbus-send` instead:
@@ -227,29 +234,26 @@ window is not tiled until it leaves fullscreen.
   its minimum size is very large.
 - Enabling or re-enabling the script with more than four eligible windows
   minimizes the oldest windows during replay.
-- Automated tests cover pure layout math, eligibility, victim selection and
-  blocking, per-output desktop selection, and add/overflow/restore lifecycle
-  behavior. Signal timing on a live KWin session is covered by the manual
-  matrix below.
+- Automated tests cover syntax and bundle construction only. Behavior on a
+  live KWin session is covered by the manual matrix below.
 
 ## Development
 
 From the repository root:
 
 ```bash
-node tools/build.js
+just build
 node --check contents/code/main.js
 node --test tests/*.test.js
 ```
 
-`node tools/build.js` regenerates `contents/code/main.js` from `src/`. Run it
-after every source change and commit the regenerated runtime.
+`just build` regenerates `contents/code/main.js` from `src/`. The generated
+runtime is ignored by Git and is not committed. `just install` and
+`just upgrade` build automatically.
 
-The tests use Node's built-in test runner (Node.js 18 or newer). They cover the
-pure layout and eligibility helpers, victim selection, per-output desktop
-selection, add/overflow/restore lifecycle behavior, the no-`Qt.` and `QTimer`
-runtime constraints, and bundle freshness: the committed runtime must equal a
-fresh `bundle()`. No KWin session and no npm packages are required.
+The test suite is limited to syntax and build checks: the bundle must parse as
+a script, carry the generated-file header, avoid QML `Qt` globals, and use the
+constructible `QTimer`. No KWin session and no npm packages are required.
 
 To follow the installed script's log output:
 
