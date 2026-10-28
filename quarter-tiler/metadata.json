@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Name": "Quarter Tiler",
+        "Description": "Automatic quarter tiling for up to four windows per screen",
+        "Icon": "preferences-system-windows",
+        "Id": "quarter-tiler",
+        "Version": "1.0.0",
+        "License": "GPL-3.0-or-later"
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}
