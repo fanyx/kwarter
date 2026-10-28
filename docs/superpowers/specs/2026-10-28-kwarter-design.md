@@ -190,8 +190,8 @@ Module responsibilities:
 - `src/shortcuts.js`: shortcut registration.
 - `src/bootstrap.js`: `main`, which wires everything.
 
-The dependency direction avoids cycles: layout is a leaf; windows depends on
-layout and registry; state depends on layout, windows, registry, and schedule;
+The dependency direction avoids cycles: layout and registry are leaves; windows
+depends on registry; state depends on layout, windows, registry, and schedule;
 schedule depends only on timing; apply depends on layout, windows, state, and
 timing; actions depend on core modules; signals depend on actions and state;
 bootstrap depends on signals, shortcuts, lifecycle, apply, and schedule.
