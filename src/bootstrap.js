@@ -10,6 +10,7 @@ const {
     connectOutputSignals,
     connectDockWindows,
     onCurrentDesktopChanged,
+    onDesktopListChanged,
     onCurrentActivityChanged,
     onScreensChanged,
 } = require("./signals/workspace");
@@ -33,6 +34,11 @@ function main() {
             workspace.currentActivityChanged,
             onCurrentActivityChanged,
             "workspace.currentActivityChanged"
+        );
+        connectSignal(
+            workspace.desktopsChanged,
+            onDesktopListChanged,
+            "workspace.desktopsChanged"
         );
         connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
         for (const output of workspace.screens) {

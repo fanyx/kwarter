@@ -27,6 +27,20 @@ function desktopFor(w) {
     return workspace.currentDesktop;
 }
 
+function currentDesktopFor(output) {
+    if (output && typeof workspace.currentDesktopForScreen === "function") {
+        try {
+            const desktop = workspace.currentDesktopForScreen(output);
+            if (desktop) {
+                return desktop;
+            }
+        } catch (e) {
+            print(`kwarter: currentDesktopForScreen failed: ${e}`);
+        }
+    }
+    return workspace.currentDesktop;
+}
+
 function resolveOutput(w) {
     const screens = workspace.screens;
     const reported = w && w.output;
@@ -131,6 +145,7 @@ function detachNativeTile(w) {
 module.exports = {
     windowId,
     desktopFor,
+    currentDesktopFor,
     resolveOutput,
     isAlive,
     windowOnActivity,

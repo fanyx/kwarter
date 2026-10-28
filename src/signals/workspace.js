@@ -11,6 +11,7 @@ const {
     windowId,
     resolveOutput,
     desktopFor,
+    currentDesktopFor,
     eligible,
     stateKey,
     windowOnActivity,
@@ -100,9 +101,9 @@ function moveWindowBetweenStates(w, oldState) {
     if (!oldState) {
         return;
     }
-    const output = resolveOutput(w);
+    const output = w && w.output;
     const desktop = desktopFor(w);
-    if (!output || !desktop) {
+    if (!output || !desktop || !contains(workspace.screens, output)) {
         return;
     }
     if (stateKey(output, desktop) === oldState.key) {
@@ -122,25 +123,63 @@ function moveWindowBetweenStates(w, oldState) {
     scheduleApply(state);
 }
 
-function onCurrentDesktopChanged() {
+function onCurrentDesktopChanged(previous, current, output) {
     try {
-        const desktop = workspace.currentDesktop;
+        const targetOutput = output || null;
+        const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
         for (const w of workspace.windowList()) {
             if (
                 eligible(w) &&
                 desktopFor(w) === desktop &&
+                (!targetOutput || resolveOutput(w) === targetOutput) &&
                 !findStateContaining(w)
             ) {
                 addWindow(w);
             }
         }
         for (const key of Object.keys(states)) {
-            if (states[key].desktop === desktop) {
-                scheduleApply(states[key]);
+            const state = states[key];
+            if (
+                state.desktop === desktop &&
+                (!targetOutput || state.output === targetOutput)
+            ) {
+                scheduleApply(state);
             }
         }
     } catch (e) {
         print(`kwarter: onCurrentDesktopChanged failed: ${e}`);
+    }
+}
+
+function onDesktopListChanged() {
+    try {
+        for (const key of Object.keys(states)) {
+            const state = states[key];
+            if (contains(workspace.desktops, state.desktop)) {
+                continue;
+            }
+            const tracked = Array.from(
+                new Set(state.slots.concat(state.minimized, state.lru))
+            );
+            for (const w of tracked) {
+                detachFromState(state, w);
+            }
+            delete states[key];
+        }
+        for (const w of workspace.windowList()) {
+            if (
+                eligible(w) &&
+                desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
+                !findStateContaining(w)
+            ) {
+                addWindow(w);
+            }
+        }
+        for (const key of Object.keys(states)) {
+            scheduleApply(states[key]);
+        }
+    } catch (e) {
+        print(`kwarter: onDesktopListChanged failed: ${e}`);
     }
 }
 
@@ -266,6 +305,7 @@ module.exports = {
     connectOutputSignals,
     moveWindowBetweenStates,
     onCurrentDesktopChanged,
+    onDesktopListChanged,
     onCurrentActivityChanged,
     onScreensChanged,
     onOutputGeometryChanged,

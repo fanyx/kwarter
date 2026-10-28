@@ -189,6 +189,20 @@
                 return workspace.currentDesktop;
             }
 
+            function currentDesktopFor(output) {
+                if (output && typeof workspace.currentDesktopForScreen === "function") {
+                    try {
+                        const desktop = workspace.currentDesktopForScreen(output);
+                        if (desktop) {
+                            return desktop;
+                        }
+                    } catch (e) {
+                        print(`kwarter: currentDesktopForScreen failed: ${e}`);
+                    }
+                }
+                return workspace.currentDesktop;
+            }
+
             function resolveOutput(w) {
                 const screens = workspace.screens;
                 const reported = w && w.output;
@@ -293,6 +307,7 @@
             module.exports = {
                 windowId,
                 desktopFor,
+                currentDesktopFor,
                 resolveOutput,
                 isAlive,
                 windowOnActivity,
@@ -560,6 +575,7 @@
             const {
                 eligible,
                 desktopFor,
+                currentDesktopFor,
                 resolveOutput,
                 windowId,
                 isAlive,
@@ -677,10 +693,13 @@
 
             function replayExistingWindows() {
                 try {
-                    const currentDesktop = workspace.currentDesktop;
                     const windows = workspace
                         .windowList()
-                        .filter((w) => eligible(w) && desktopFor(w) === currentDesktop)
+                        .filter(
+                            (w) =>
+                                eligible(w) &&
+                                desktopFor(w) === currentDesktopFor(resolveOutput(w))
+                        )
                         .sort((a, b) => (a.stackingOrder || 0) - (b.stackingOrder || 0));
 
                     for (const w of windows) {
@@ -869,6 +888,7 @@
                 windowId,
                 resolveOutput,
                 desktopFor,
+                currentDesktopFor,
                 eligible,
                 stateKey,
                 windowOnActivity,
@@ -958,9 +978,9 @@
                 if (!oldState) {
                     return;
                 }
-                const output = resolveOutput(w);
+                const output = w && w.output;
                 const desktop = desktopFor(w);
-                if (!output || !desktop) {
+                if (!output || !desktop || !contains(workspace.screens, output)) {
                     return;
                 }
                 if (stateKey(output, desktop) === oldState.key) {
@@ -980,25 +1000,63 @@
                 scheduleApply(state);
             }
 
-            function onCurrentDesktopChanged() {
+            function onCurrentDesktopChanged(previous, current, output) {
                 try {
-                    const desktop = workspace.currentDesktop;
+                    const targetOutput = output || null;
+                    const desktop = current || currentDesktopFor(targetOutput || workspace.activeScreen);
                     for (const w of workspace.windowList()) {
                         if (
                             eligible(w) &&
                             desktopFor(w) === desktop &&
+                            (!targetOutput || resolveOutput(w) === targetOutput) &&
                             !findStateContaining(w)
                         ) {
                             addWindow(w);
                         }
                     }
                     for (const key of Object.keys(states)) {
-                        if (states[key].desktop === desktop) {
-                            scheduleApply(states[key]);
+                        const state = states[key];
+                        if (
+                            state.desktop === desktop &&
+                            (!targetOutput || state.output === targetOutput)
+                        ) {
+                            scheduleApply(state);
                         }
                     }
                 } catch (e) {
                     print(`kwarter: onCurrentDesktopChanged failed: ${e}`);
+                }
+            }
+
+            function onDesktopListChanged() {
+                try {
+                    for (const key of Object.keys(states)) {
+                        const state = states[key];
+                        if (contains(workspace.desktops, state.desktop)) {
+                            continue;
+                        }
+                        const tracked = Array.from(
+                            new Set(state.slots.concat(state.minimized, state.lru))
+                        );
+                        for (const w of tracked) {
+                            detachFromState(state, w);
+                        }
+                        delete states[key];
+                    }
+                    for (const w of workspace.windowList()) {
+                        if (
+                            eligible(w) &&
+                            desktopFor(w) === currentDesktopFor(resolveOutput(w)) &&
+                            !findStateContaining(w)
+                        ) {
+                            addWindow(w);
+                        }
+                    }
+                    for (const key of Object.keys(states)) {
+                        scheduleApply(states[key]);
+                    }
+                } catch (e) {
+                    print(`kwarter: onDesktopListChanged failed: ${e}`);
                 }
             }
 
@@ -1124,6 +1182,7 @@
                 connectOutputSignals,
                 moveWindowBetweenStates,
                 onCurrentDesktopChanged,
+                onDesktopListChanged,
                 onCurrentActivityChanged,
                 onScreensChanged,
                 onOutputGeometryChanged,
@@ -1614,6 +1673,7 @@
                 connectOutputSignals,
                 connectDockWindows,
                 onCurrentDesktopChanged,
+                onDesktopListChanged,
                 onCurrentActivityChanged,
                 onScreensChanged,
             } = require("./signals/workspace");
@@ -1637,6 +1697,11 @@
                         workspace.currentActivityChanged,
                         onCurrentActivityChanged,
                         "workspace.currentActivityChanged"
+                    );
+                    connectSignal(
+                        workspace.desktopsChanged,
+                        onDesktopListChanged,
+                        "workspace.desktopsChanged"
                     );
                     connectSignal(workspace.screensChanged, onScreensChanged, "workspace.screensChanged");
                     for (const output of workspace.screens) {

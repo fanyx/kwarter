@@ -10,6 +10,7 @@ const {
 const {
     eligible,
     desktopFor,
+    currentDesktopFor,
     resolveOutput,
     windowId,
     isAlive,
@@ -127,10 +128,13 @@ function removeWindow(w) {
 
 function replayExistingWindows() {
     try {
-        const currentDesktop = workspace.currentDesktop;
         const windows = workspace
             .windowList()
-            .filter((w) => eligible(w) && desktopFor(w) === currentDesktop)
+            .filter(
+                (w) =>
+                    eligible(w) &&
+                    desktopFor(w) === currentDesktopFor(resolveOutput(w))
+            )
             .sort((a, b) => (a.stackingOrder || 0) - (b.stackingOrder || 0));
 
         for (const w of windows) {
