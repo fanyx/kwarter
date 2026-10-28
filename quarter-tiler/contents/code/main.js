@@ -155,7 +155,7 @@ function resolveRoot(w) {
 
 const states = {};
 const connectedWindowIds = new Set();
-const connectedOutputNames = new Set();
+const connectedOutputs = new Set();
 const retriedOutput = new Set();
 const generatedIds = new WeakMap();
 let nextGeneratedId = 0;
@@ -181,6 +181,22 @@ function desktopFor(w) {
         return w.desktops[0];
     }
     return workspace.currentDesktop;
+}
+
+function resolveOutput(w) {
+    const screens = workspace.screens;
+    const reported = w && w.output;
+    if (!screens) {
+        return reported || workspace.activeScreen || null;
+    }
+    if (reported && contains(screens, reported)) {
+        return reported;
+    }
+    const active = workspace.activeScreen;
+    if (active && contains(screens, active)) {
+        return active;
+    }
+    return null;
 }
 
 function isAlive(w) {
@@ -355,7 +371,7 @@ function addWindow(w) {
         }
 
         const desktop = desktopFor(w);
-        const output = w.output || workspace.activeScreen;
+        const output = resolveOutput(w);
 
         if (!output) {
             if (!retriedOutput.has(w)) {
@@ -787,10 +803,10 @@ function connectSignal(signal, handler) {
 }
 
 function connectOutputSignals(output) {
-    if (!output || !output.name || connectedOutputNames.has(output.name)) {
+    if (!output || connectedOutputs.has(output)) {
         return;
     }
-    connectedOutputNames.add(output.name);
+    connectedOutputs.add(output);
     connectSignal(output.geometryChanged, () => onOutputGeometryChanged(output));
 }
 
@@ -798,7 +814,7 @@ function moveWindowBetweenStates(w, oldState) {
     if (!oldState) {
         return;
     }
-    const output = w.output || workspace.activeScreen;
+    const output = resolveOutput(w);
     const desktop = desktopFor(w);
     if (!output || !desktop) {
         return;
@@ -847,7 +863,9 @@ function onCurrentActivityChanged() {
         const affected = [];
         for (const key of Object.keys(states)) {
             const state = states[key];
-            const tracked = state.slots.concat(state.minimized, state.lru);
+            const tracked = Array.from(
+                new Set(state.slots.concat(state.minimized, state.lru))
+            );
             let touched = false;
             for (const w of tracked) {
                 if (!windowOnActivity(w)) {
@@ -874,6 +892,11 @@ function onCurrentActivityChanged() {
 
 function onScreensChanged() {
     try {
+        for (const output of connectedOutputs) {
+            if (!contains(workspace.screens, output)) {
+                connectedOutputs.delete(output);
+            }
+        }
         for (const output of workspace.screens) {
             connectOutputSignals(output);
         }
@@ -882,20 +905,16 @@ function onScreensChanged() {
             if (contains(workspace.screens, state.output)) {
                 continue;
             }
-            const tracked = state.slots.concat(state.minimized, state.lru);
+            const tracked = Array.from(
+                new Set(state.slots.concat(state.minimized, state.lru))
+            );
             for (const w of tracked) {
                 detachFromState(state, w);
             }
             delete states[key];
         }
         for (const w of workspace.windowList()) {
-            const output = w.output || workspace.activeScreen;
-            if (
-                eligible(w) &&
-                output &&
-                contains(workspace.screens, output) &&
-                !findStateContaining(w)
-            ) {
+            if (eligible(w) && !findStateContaining(w)) {
                 addWindow(w);
             }
         }
