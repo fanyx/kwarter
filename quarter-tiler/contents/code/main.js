@@ -656,9 +656,22 @@ function registerAllShortcuts() {
     }
 }
 
+function dragIsResize(w) {
+    if (w.resize === true) {
+        return true;
+    }
+    if (w.move === true) {
+        return false;
+    }
+    return false;
+}
+
 function onInteractiveMoveResizeStarted(w) {
     try {
-        activeDrag = { window: w, resizing: Boolean(w.resize) };
+        if (activeDrag && !isAlive(activeDrag.window)) {
+            activeDrag = null;
+        }
+        activeDrag = { window: w, resizing: dragIsResize(w) };
     } catch (e) {
         print(`quarter-tiler: onInteractiveMoveResizeStarted failed: ${e}`);
     }
@@ -666,7 +679,10 @@ function onInteractiveMoveResizeStarted(w) {
 
 function onInteractiveMoveResizeFinished(w) {
     try {
-        const drag = activeDrag;
+        let drag = activeDrag;
+        if (drag && !isAlive(drag.window)) {
+            drag = null;
+        }
         activeDrag = null;
         const resizing = Boolean(drag && drag.window === w ? drag.resizing : false);
         Qt.callLater(() => {
@@ -683,10 +699,20 @@ function onInteractiveMoveResizeFinished(w) {
 
 function windowsAt(pos) {
     const found = workspace.windowAt(pos, -1);
+    if (!found) {
+        return [];
+    }
     if (Array.isArray(found)) {
         return found;
     }
-    return found ? [found] : [];
+    if (typeof found.length === "number") {
+        const list = [];
+        for (let i = 0; i < found.length; i++) {
+            list.push(found[i]);
+        }
+        return list;
+    }
+    return [found];
 }
 
 function handleDrop(w, resizing) {
