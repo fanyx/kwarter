@@ -1,0 +1,616 @@
+# Automatic Quarter Tiling for KWin 6 — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build a KWin 6 Wayland script that tiles up to four normal windows per screen and desktop, with LRU overflow, LIFO restore, drag swapping, and `Meta+Arrow` swapping.
+
+**Architecture:** One JavaScript file, `contents/code/main.js`, holds pure layout helpers and KWin signal wiring. Pure helpers are exported through a Node guard; KWin runs `main()`. Each `(output, desktop)` pair keeps a slot array, an LRU list, and a LIFO minimize stack. Geometry is written directly from `clientArea(KWin.MaximizeArea, output, desktop)`.
+
+**Tech Stack:** KWin 6 JavaScript scripting API, Node built-in test runner, no dependencies, no build step.
+
+**Spec:** `docs/superpowers/specs/2026-10-28-kwin-quarter-tiling-design.md`
+
+## Global Constraints
+
+- Target KDE Plasma 6, KWin 6.x, Wayland only.
+- One runtime file: `quarter-tiler/contents/code/main.js`. KWin cannot include another JavaScript file.
+- `GAP = 6` logical pixels; each non-maximized tile is inset by 3 pixels per side.
+- `MAX_WINDOWS = 4`.
+- Use `Window.frameGeometry` for geometry writes.
+- Use `workspace.clientArea(KWin.MaximizeArea, output, desktop)` for the work area.
+- Shortcuts are `Meta+Left`, `Meta+Right`, `Meta+Up`, `Meta+Down`.
+- No new dependencies; tests use only `node:test` and `node:assert`.
+- No persistence, no settings UI, no QML.
+- Every task ends with `node --check quarter-tiler/contents/code/main.js` and `node --test quarter-tiler/tests/layout.test.js`.
+- Commit after each task with the message named in the task.
+- Tests run from the repository root.
+
+## Review Focus
+
+1. **Work-area offsets:** slot rectangles must add `area.x` and `area.y`, so panels and non-zero monitor origins work. Covered by Task 1 offset tests.
+2. **Multi-monitor isolation:** state keys must include output name and desktop id; no window may leak into another screen's slots. Covered by Task 1 key tests and Task 5 review.
+3. **Maximize restore race:** after `setMaximize(false, false)`, KWin may restore old geometry. Task 2 writes geometry and verifies once on the next tick.
+4. **Drag signal timing:** `interactiveMoveResizeFinished` may fire before KWin settles geometry. Task 4 defers one tick and makes snap-back authoritative.
+5. **Dialogs and LRU:** transients must never enter slots, and a parent with a visible child must not be evicted. Covered by Task 1 victim tests and Task 2 wiring.
+6. **Shortcut conflict:** built-in `Meta+Arrow` quick tiling must be disabled by the user. Task 6 documents it.
+
+---
+
+## File Structure
+
+```
+quarter-tiler/
+├── metadata.json
+├── contents/
+│   └── code/
+│       └── main.js
+├── tests/
+│   └── layout.test.js
+└── README.md
+```
+
+- `main.js`: pure layout helpers, runtime state, signal wiring, shortcuts, drag handling, geometry application.
+- `tests/layout.test.js`: Node tests for pure helpers.
+- `metadata.json`: KWin script package metadata.
+- `README.md`: install, shortcut setup, behavior, manual test matrix, limitations.
+
+---
+
+### Task 1: Pure layout core
+
+**Files:**
+- Create: `quarter-tiler/contents/code/main.js`
+- Create: `quarter-tiler/tests/layout.test.js`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  - `GAP: number` = 6
+  - `MAX_WINDOWS: number` = 4
+  - `slotRects(count: number, area: Rect, gap: number) -> Rect[]`
+  - `directionalTarget(rects: Rect[], activeIndex: number, dx: number, dy: number) -> number`
+  - `chooseVictimIndex(lruIds: string[], blockedIds: string[]) -> number`
+  - `swapSlots(slots: any[], a: number, b: number) -> any[]`
+  - `fitToMinSize(rect: Rect, minSize: Size) -> Rect`
+  - `rectsClose(a: Rect, b: Rect, tolerance: number) -> boolean`
+  - `eligible(w: Window) -> boolean`
+  - `stateKey(output: {name: string}, desktop: {id: string}) -> string`
+  - `resolveRoot(w: Window) -> Window`
+  - `main(): void` stub until Task 2
+  - Rectangle shape: `{x: number, y: number, width: number, height: number}`
+
+- [ ] **Step 1: Write the failing test file**
+
+Create `quarter-tiler/tests/layout.test.js`:
+
+```js
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+    GAP,
+    MAX_WINDOWS,
+    slotRects,
+    directionalTarget,
+    chooseVictimIndex,
+    swapSlots,
+    fitToMinSize,
+    rectsClose,
+    eligible,
+    stateKey,
+    resolveRoot,
+    main,
+} = require("../contents/code/main.js");
+
+const AREA = { x: 0, y: 0, width: 1000, height: 800 };
+
+function rects(count, area = AREA, gap = GAP) {
+    return slotRects(count, area, gap);
+}
+
+function win(overrides = {}) {
+    return Object.assign({
+        normalWindow: true,
+        managed: true,
+        deleted: false,
+        transient: false,
+        dialog: false,
+        popupWindow: false,
+        specialWindow: false,
+        onAllDesktops: false,
+    }, overrides);
+}
+
+test("exports constants and a callable main stub", () => {
+    assert.equal(GAP, 6);
+    assert.equal(MAX_WINDOWS, 4);
+    assert.equal(typeof main, "function");
+});
+
+test("one window uses the full work area without a gap", () => {
+    assert.deepEqual(rects(1), [{ x: 0, y: 0, width: 1000, height: 800 }]);
+});
+
+test("two windows split left and right with a 6px gap", () => {
+    assert.deepEqual(rects(2), [
+        { x: 3, y: 3, width: 494, height: 794 },
+        { x: 503, y: 3, width: 494, height: 794 },
+    ]);
+});
+
+test("three windows use left half plus right top and right bottom", () => {
+    assert.deepEqual(rects(3), [
+        { x: 3, y: 3, width: 494, height: 794 },
+        { x: 503, y: 3, width: 494, height: 394 },
+        { x: 503, y: 403, width: 494, height: 394 },
+    ]);
+});
+
+test("four windows use quarters in TL, TR, BR, BL order", () => {
+    assert.deepEqual(rects(4), [
+        { x: 3, y: 3, width: 494, height: 394 },
+        { x: 503, y: 3, width: 494, height: 394 },
+        { x: 503, y: 403, width: 494, height: 394 },
+        { x: 3, y: 403, width: 494, height: 394 },
+    ]);
+});
+
+test("slot rectangles respect a non-zero work-area origin", () => {
+    assert.deepEqual(rects(2, { x: 100, y: 50, width: 1000, height: 800 }), [
+        { x: 103, y: 53, width: 494, height: 794 },
+        { x: 603, y: 53, width: 494, height: 794 },
+    ]);
+});
+
+test("directional target finds horizontal and vertical neighbours", () => {
+    assert.equal(directionalTarget(rects(2), 0, 1, 0), 1);
+    assert.equal(directionalTarget(rects(2), 1, -1, 0), 0);
+    assert.equal(directionalTarget(rects(2), 0, 0, 1), -1);
+
+    assert.equal(directionalTarget(rects(3), 0, 1, 0), 1);
+    assert.equal(directionalTarget(rects(3), 1, -1, 0), 0);
+    assert.equal(directionalTarget(rects(3), 1, 0, 1), 2);
+    assert.equal(directionalTarget(rects(3), 2, 0, -1), 1);
+    assert.equal(directionalTarget(rects(3), 2, 1, 0), -1);
+
+    assert.equal(directionalTarget(rects(4), 0, 1, 0), 1);
+    assert.equal(directionalTarget(rects(4), 0, 0, 1), 3);
+    assert.equal(directionalTarget(rects(4), 1, 0, 1), 2);
+    assert.equal(directionalTarget(rects(4), 2, -1, 0), 3);
+    assert.equal(directionalTarget(rects(4), 3, 0, -1), 0);
+});
+
+test("directional target returns -1 when there is no candidate", () => {
+    assert.equal(directionalTarget(rects(1), 0, 1, 0), -1);
+    assert.equal(directionalTarget([], 0, 1, 0), -1);
+    assert.equal(directionalTarget(rects(2), 0, 0, 0), -1);
+});
+
+test("victim selection skips blocked windows and falls back to the first", () => {
+    assert.equal(chooseVictimIndex(["a", "b", "c"], []), 0);
+    assert.equal(chooseVictimIndex(["a", "b", "c"], ["a"]), 1);
+    assert.equal(chooseVictimIndex(["a", "b", "c"], ["a", "b"]), 2);
+    assert.equal(chooseVictimIndex(["a", "b", "c"], ["a", "b", "c"]), 0);
+    assert.equal(chooseVictimIndex([], []), -1);
+});
+
+test("swapSlots returns a new array with two entries exchanged", () => {
+    const before = ["a", "b", "c"];
+    assert.deepEqual(swapSlots(before, 0, 2), ["c", "b", "a"]);
+    assert.deepEqual(before, ["a", "b", "c"]);
+    assert.deepEqual(swapSlots(before, 1, 1), ["a", "b", "c"]);
+});
+
+test("fitToMinSize raises width and height to the minimum", () => {
+    assert.deepEqual(
+        fitToMinSize({ x: 10, y: 20, width: 100, height: 100 }, { width: 200, height: 50 }),
+        { x: 10, y: 20, width: 200, height: 100 }
+    );
+    assert.deepEqual(
+        fitToMinSize({ x: 10, y: 20, width: 100, height: 100 }, { width: 50, height: 150 }),
+        { x: 10, y: 20, width: 100, height: 150 }
+    );
+});
+
+test("rectsClose compares with a tolerance", () => {
+    const a = { x: 1, y: 2, width: 3, height: 4 };
+    assert.equal(rectsClose(a, { x: 2, y: 3, width: 4, height: 5 }, 1), true);
+    assert.equal(rectsClose(a, { x: 3, y: 2, width: 3, height: 4 }, 1), false);
+});
+
+test("eligible accepts normal managed windows and rejects transients and specials", () => {
+    assert.equal(eligible(win()), true);
+    for (const key of [
+        "normalWindow",
+        "managed",
+        "transient",
+        "dialog",
+        "popupWindow",
+        "specialWindow",
+        "onAllDesktops",
+    ]) {
+        const bad = win({ [key]: key === "normalWindow" || key === "managed" ? false : true });
+        assert.equal(eligible(bad), false, key);
+    }
+    assert.equal(eligible(win({ deleted: true })), false);
+    assert.equal(eligible(null), false);
+});
+
+test("stateKey joins output name and desktop id", () => {
+    assert.equal(stateKey({ name: "DP-1" }, { id: "desk-a" }), "DP-1|desk-a");
+});
+
+test("resolveRoot follows transientFor to the top-level parent", () => {
+    const root = { internalId: "root", transientFor: null };
+    const child = { internalId: "child", transientFor: root };
+    const grandchild = { internalId: "grandchild", transientFor: child };
+    assert.equal(resolveRoot(grandchild), root);
+    assert.equal(resolveRoot(root), root);
+});
+```
+
+- [ ] **Step 2: Run tests and verify failure**
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: FAIL because `../contents/code/main.js` does not exist.
+
+- [ ] **Step 3: Implement pure helpers and bootstrap**
+
+Create `quarter-tiler/contents/code/main.js`. Put only pure helpers, the `main` stub, and the bootstrap in this task.
+
+Required behavior:
+
+- `slotRects(1, area)` returns the full area with no inset.
+- `slotRects(2|3|4, area, gap)` uses the fractional slots from the spec: 2 = left/right halves; 3 = left half, right top, right bottom; 4 = TL, TR, BR, BL.
+- Convert fractions to pixels with `Math.round`, add `area.x`/`area.y`, then inset every side by `gap / 2`. For an odd gap, use `Math.round(gap / 2)` for the inset.
+- `directionalTarget` scores candidates as `abs(primary delta) + 2 * abs(lateral delta)`, requires the center to lie strictly in the requested direction, and breaks ties by lower index. Return `-1` when `dx` and `dy` are both zero, when the active index is invalid, or when no candidate exists.
+- `chooseVictimIndex` returns the first unblocked index; if all are blocked, returns `0`; if `lruIds` is empty, returns `-1`.
+- `swapSlots` returns a copy and does not mutate the input.
+- `fitToMinSize` widens/widens height to `minSize`, keeping `x`/`y`.
+- `rectsClose` compares all four fields within `tolerance`.
+- `eligible` implements the spec eligibility check exactly, including `!w.deleted` and null protection.
+- `stateKey` returns `` `${output.name}|${desktop.id}` ``.
+- `resolveRoot` follows `transientFor`, with a visited-id guard against cycles.
+- `main()` is an empty function in this task.
+- End the file with:
+
+```js
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+        GAP,
+        MAX_WINDOWS,
+        slotRects,
+        directionalTarget,
+        chooseVictimIndex,
+        swapSlots,
+        fitToMinSize,
+        rectsClose,
+        eligible,
+        stateKey,
+        resolveRoot,
+        main,
+    };
+} else {
+    main();
+}
+```
+
+- [ ] **Step 4: Run tests and syntax check**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: no output, exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add quarter-tiler/contents/code/main.js quarter-tiler/tests/layout.test.js
+git commit -m "feat(tiler): add layout math and eligibility helpers"
+```
+
+---
+
+### Task 2: Core tiling lifecycle
+
+**Files:**
+- Modify: `quarter-tiler/contents/code/main.js`
+- Test: `quarter-tiler/tests/layout.test.js`
+
+**Interfaces:**
+- Consumes: `GAP`, `MAX_WINDOWS`, `slotRects`, `chooseVictimIndex`, `fitToMinSize`, `rectsClose`, `eligible`, `stateKey`, `resolveRoot` from Task 1.
+- Produces:
+  - `states: object` — map keyed by `stateKey`
+  - `stateFor(output: Output, desktop: VirtualDesktop) -> State`
+  - `findStateContaining(w: Window) -> State | null`
+  - `detachFromState(state: State, w: Window) -> void`
+  - `addToState(state: State, w: Window) -> void`
+  - `addWindow(w: Window) -> void`
+  - `removeWindow(w: Window) -> void`
+  - `touch(state: State, w: Window) -> void`
+  - `chooseVictim(state: State) -> Window | null`
+  - `scheduleApply(state: State) -> void`
+  - `applyState(state: State) -> void`
+  - `verifyState(state: State, targets: Array<{w: Window, rect: Rect}>) -> void`
+  - `pruneState(state: State) -> void`
+  - `isAlive(w: Window) -> boolean`
+  - `windowId(w: Window) -> string`
+  - `desktopFor(w: Window) -> VirtualDesktop`
+  - `onWindowAdded(w)`, `onWindowRemoved(w)`, `onWindowActivated(w)`
+  - `onMinimizedChanged(w)`, `onFullScreenChanged(w)`, `onMaximizedChanged(w)`
+  - `connectWindowSignals(w) -> void`
+  - `replayExistingWindows() -> void`
+  - `main() -> void`
+  - `State` shape: `{key, output, desktop, slots, lru, minimized, applying, applyScheduled}`
+
+Runtime requirements:
+
+- `main()` connects `workspace.windowAdded`, `workspace.windowRemoved`, `workspace.windowActivated`, then calls `replayExistingWindows()`.
+- `onWindowAdded` defers through `Qt.callLater` and then calls `addWindow`.
+- `connectWindowSignals` deduplicates by `windowId`. Connect `minimizedChanged`, `fullScreenChanged`, and `maximizedChanged`. Later tasks append drag and desktop/output signals.
+- `addWindow` rejects ineligible, already-tracked, fullscreen, wrong-activity, and output-less windows. Resolve output with `w.output || workspace.activeScreen`. Retry once with `Qt.callLater` when output is null.
+- `addToState` appends when below four. At four, use `chooseVictim`, remove the victim from `slots`/`lru`, set `victim.minimized = true`, push it to `minimized`, and insert the new window at the victim index.
+- `chooseVictim` blocks a candidate when a visible non-minimized window resolves to it as a transient parent, and blocks fullscreen candidates. Build IDs with `windowId` and call `chooseVictimIndex`. A window that resolves to itself must not block itself.
+- `touch` removes and appends in `lru`.
+- `onWindowActivated` resolves the root transient parent, finds its state, and touches it when it is in `slots`.
+- `onMinimizedChanged` handles manual minimize/restore only. Script eviction mutates `slots`/`lru` before setting `minimized = true`; script restore pops the stack before setting `minimized = false`.
+- Manual minimize: remove from `slots`/`lru`, push to `minimized` if absent, schedule an apply.
+- Manual restore: remove from `minimized`, call `addToState`, schedule an apply.
+- `onFullScreenChanged` re-adds an eligible window when leaving fullscreen and schedules an apply for slotted fullscreen toggles.
+- `onMaximizedChanged` schedules an apply unless `state.applying` is true. This reverts manual maximize/unmaximize.
+- `scheduleApply` coalesces with `applyScheduled` and `Qt.callLater`.
+- `applyState` prunes, checks `state.output`/`state.desktop` membership, computes the area, uses real maximize for one window, otherwise unmaximizes all slots and writes `frameGeometry`. Fullscreen windows are skipped. Store target rectangles and verify once on the next tick with `rectsClose` tolerance 1.
+- `removeWindow` finds state by membership, records whether the window was visible and its index, detaches it, restores the most recent minimized window into the freed index when the closed window was visible and the stack is non-empty, sets `workspace.activeWindow`, and schedules an apply. Closing a minimized window does not restore another.
+- `pruneState` removes deleted/ineligible windows and keeps `lru` limited to windows in `slots`. Delete a state only when `slots` and `minimized` are both empty.
+- `replayExistingWindows` sorts eligible windows on the current desktop by ascending `stackingOrder` and calls `addWindow` for each. Filter with `desktopFor(w) === workspace.currentDesktop`; activity filtering remains inside `addWindow`.
+- `isAlive(w)` checks `w && !w.deleted && workspace.windowList().indexOf(w) !== -1`.
+
+- [ ] **Step 1: Implement the runtime functions**
+
+Add the state map, lifecycle functions, and `main()` wiring described above. Keep the Task 1 export block; add the new runtime functions that later tasks need to the export list only if they are useful for tests. Do not export KWin signal handlers.
+
+- [ ] **Step 2: Verify syntax and pure tests**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+- [ ] **Step 3: Manual smoke test if a KWin session is available**
+
+Load the script directly:
+
+```bash
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
+  "$PWD/quarter-tiler/contents/code/main.js" quarter-tiler-dev
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
+journalctl -f _COMM=kwin_wayland
+```
+
+Open 1 to 5 normal windows. Verify the layouts, LRU eviction, close restore, and manual maximize revert. If no KWin session is available, record "not run" in the task summary.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add quarter-tiler/contents/code/main.js
+git commit -m "feat(tiler): add lifecycle and geometry application"
+```
+
+---
+
+### Task 3: Arrow shortcut swapping
+
+**Files:**
+- Modify: `quarter-tiler/contents/code/main.js`
+
+**Interfaces:**
+- Consumes: `slotRects`, `directionalTarget`, `swapSlots`, `resolveRoot`, `findStateContaining`, `scheduleApply`, `GAP`.
+- Produces:
+  - `swapDirection(dx: number, dy: number) -> void`
+  - `registerAllShortcuts() -> void`
+
+Requirements:
+
+- Register four shortcuts with `registerShortcut`:
+  - `"Quarter Tiler: Swap Left"` / `"Swap window left"` / `"Meta+Left"` / `() => swapDirection(-1, 0)`
+  - `"Quarter Tiler: Swap Right"` / `"Swap window right"` / `"Meta+Right"` / `() => swapDirection(1, 0)`
+  - `"Quarter Tiler: Swap Up"` / `"Swap window up"` / `"Meta+Up"` / `() => swapDirection(0, -1)`
+  - `"Quarter Tiler: Swap Down"` / `"Swap window down"` / `"Meta+Down"` / `() => swapDirection(0, 1)`
+- Log when `registerShortcut` returns false.
+- `swapDirection` resolves the active window's root, finds its state, and requires the root to be in `slots`.
+- With fewer than two slots, or a fullscreen root, do nothing.
+- Compute the area with `workspace.clientArea(KWin.MaximizeArea, state.output, state.desktop)`, build rects with `slotRects`, and call `directionalTarget`.
+- On a target, replace `state.slots` with `swapSlots(state.slots, activeIndex, targetIndex)`, schedule an apply, and reactivate the root only when the root itself was the active window. A focused dialog must keep focus.
+- `main()` calls `registerAllShortcuts()` after connecting workspace signals.
+
+- [ ] **Step 1: Implement shortcuts and directional swap**
+
+Add `swapDirection` and `registerAllShortcuts`; wire the call into `main()`.
+
+- [ ] **Step 2: Verify**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+- [ ] **Step 3: Manual swap check if KWin is available**
+
+Clear KWin's Quick Tile Left/Right/Top/Bottom shortcuts. Open 2, 3, and 4 windows. Press each arrow. Verify the expected neighbour swaps and that a missing neighbour does nothing. Verify a focused dialog keeps focus. Record "not run" if no session.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add quarter-tiler/contents/code/main.js
+git commit -m "feat(tiler): add arrow shortcut swaps"
+```
+
+---
+
+### Task 4: Drag-and-drop swapping
+
+**Files:**
+- Modify: `quarter-tiler/contents/code/main.js`
+
+**Interfaces:**
+- Consumes: `findStateContaining`, `detachFromState`, `stateFor`, `addToState`, `scheduleApply`, `desktopFor`, `swapSlots`, `isAlive`.
+- Produces:
+  - `activeDrag` — `{window, resizing}` or null
+  - `onInteractiveMoveResizeStarted(w) -> void`
+  - `onInteractiveMoveResizeFinished(w) -> void`
+  - `handleDrop(w: Window, resizing: boolean) -> void`
+
+Requirements:
+
+- `connectWindowSignals` also connects `interactiveMoveResizeStarted` and `interactiveMoveResizeFinished`.
+- On start, store `{window: w, resizing: !!w.resize}` in `activeDrag`.
+- On finish, clear `activeDrag` and defer `handleDrop` with `Qt.callLater`.
+- `handleDrop` returns when the window is not in a state or is fullscreen.
+- Resolve `pos = workspace.cursorPos`, destination output with `workspace.screenAt(pos) || w.output`, and desktop with `desktopFor(w)`.
+- When the destination state differs from the source: detach the window without restoring, add it to the destination with `addToState`, and schedule applies for both states.
+- For a resize on the same state, schedule an apply to snap back.
+- For a move on the same state, query `workspace.windowAt(pos, -1)`. Skip the dragged window and take the topmost remaining window. If it is in the same state's `slots` and is not fullscreen, swap the two slot indices and schedule an apply. Otherwise schedule an apply to snap back.
+- Do not activate the target. The dragged window remains active.
+
+- [ ] **Step 1: Implement drag handling**
+
+Add `activeDrag`, the two handlers, `handleDrop`, and the signal connections.
+
+- [ ] **Step 2: Verify**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+- [ ] **Step 3: Manual drag check if KWin is available**
+
+Drag one tiled window onto another; verify the swap. Drop on empty space, a dialog, and a non-tiled window; verify snap-back. Resize a tile; verify snap-back. Drag to another monitor; verify source reflow and destination add or eviction. Record "not run" if no session.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add quarter-tiler/contents/code/main.js
+git commit -m "feat(tiler): add drag and drop swapping"
+```
+
+---
+
+### Task 5: Monitors, desktops, activities, hotplug
+
+**Files:**
+- Modify: `quarter-tiler/contents/code/main.js`
+
+**Interfaces:**
+- Consumes: `stateFor`, `findStateContaining`, `detachFromState`, `addToState`, `addWindow`, `scheduleApply`, `desktopFor`, `windowOnActivity`, `isAlive`.
+- Produces:
+  - `onCurrentDesktopChanged() -> void`
+  - `onCurrentActivityChanged() -> void`
+  - `onScreensChanged() -> void`
+  - `onOutputGeometryChanged(output: Output) -> void`
+  - `onDesktopsChanged(w: Window) -> void`
+  - `onOutputChanged(w: Window) -> void`
+  - `windowOnActivity(w: Window) -> boolean`
+
+Requirements:
+
+- `main()` connects `workspace.currentDesktopChanged`, `workspace.currentActivityChanged`, `workspace.screensChanged`, and each output's `geometryChanged` with `connectOutputSignals`.
+- `connectWindowSignals` also connects `desktopsChanged` and `outputChanged`.
+- `windowOnActivity` returns true when `w.activities` is empty or contains `workspace.currentActivity`.
+- `addWindow` uses `windowOnActivity` instead of an inline activity check.
+- `onCurrentDesktopChanged`: adopt eligible windows whose `desktopFor(w) === workspace.currentDesktop` and are not tracked; apply states whose `desktop === workspace.currentDesktop`.
+- `onCurrentActivityChanged`: detach tracked windows that are no longer on the current activity without minimizing them; apply all affected states; adopt eligible windows on the current activity.
+- `onScreensChanged`: for each state whose output is no longer in `workspace.screens`, detach all its windows and delete the state; adopt every eligible untracked window; apply every remaining state.
+- `onOutputGeometryChanged(output)`: apply every state whose `output === output`.
+- `onDesktopsChanged(w)`: find the old state. If the window's `desktopFor(w)` key differs, detach it from the old state, add it to the new desktop state, and apply the old state.
+- `onOutputChanged(w)`: same pattern for output changes, using `w.output || workspace.activeScreen`.
+- `connectOutputSignals` deduplicates by output name and connects `geometryChanged`.
+
+- [ ] **Step 1: Implement multi-output and desktop handlers**
+
+Add the handlers, the output signal wiring, and the `main()` connections.
+
+- [ ] **Step 2: Verify**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+- [ ] **Step 3: Manual multi-screen check if KWin is available**
+
+Test two monitors with independent layouts, two virtual desktops, switching between them, and monitor removal/reconnect. Verify no window leaks across state keys. Record "not run" if no session.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add quarter-tiler/contents/code/main.js
+git commit -m "feat(tiler): handle screens, desktops, and activities"
+```
+
+---
+
+### Task 6: Package metadata, install notes, final verification
+
+**Files:**
+- Create: `quarter-tiler/metadata.json`
+- Create: `quarter-tiler/README.md`
+- Modify: `quarter-tiler/contents/code/main.js` only if verification exposes a defect.
+
+**Interfaces:**
+- Consumes: the finished `main.js`.
+- Produces: installable KWin script package.
+
+Requirements:
+
+- `metadata.json` matches the spec: `KPlugin.Name` = `"Quarter Tiler"`, `KPlugin.Id` = `"quarter-tiler"`, `KPlugin.Version` = `"1.0.0"`, `KPlugin.License` = `"GPL-3.0-or-later"`, `X-Plasma-API` = `"javascript"`, `X-Plasma-MainScript` = `"code/main.js"`, `KPackageStructure` = `"KWin/Script"`.
+- `README.md` covers: purpose, requirements (Plasma 6 Wayland), install commands, enabling the script, clearing KWin's Quick Tile Left/Right/Top/Bottom shortcuts, disabling drag-to-edge quick tiling, the four layouts, overflow/restore behavior, drag and shortcut swapping, known limitations, and how to run tests.
+- Installation commands:
+
+```bash
+kpackagetool6 --type=KWin/Script -i ./quarter-tiler
+kwriteconfig6 --file kwinrc --group Plugins --key quarter-tilerEnabled true
+qdbus6 org.kde.KWin /KWin reconfigure
+```
+
+- README manual test matrix: 1 to 4 layout growth, 5th LRU eviction, close restore, manual minimize/restore, manual maximize revert, drag swap, drop empty/dialog/non-tiled, resize snap-back, cross-screen drag, all arrow swaps, dialog spawn, parent-with-dialog LRU protection, fullscreen toggle, panel move, two monitors, two desktops, disable/re-enable replay, monitor reconnect.
+- Do not add a settings UI, config file, dependency, or build script.
+
+- [ ] **Step 1: Add metadata and README**
+
+Create both files with the exact fields and sections above.
+
+- [ ] **Step 2: Final verification**
+
+Run: `node --check quarter-tiler/contents/code/main.js`
+Expected: exit 0.
+
+Run: `node --test quarter-tiler/tests/layout.test.js`
+Expected: all tests pass.
+
+Run: `git status --short`
+Expected: only intended files changed.
+
+- [ ] **Step 3: Install smoke test if KWin is available**
+
+Run the three install commands. Open 1 to 5 windows and exercise the README matrix. Record "not run" if no KWin session.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add quarter-tiler/metadata.json quarter-tiler/README.md quarter-tiler/contents/code/main.js
+git commit -m "docs(tiler): add package metadata and install notes"
+```
+
+---
+
+## Plan Self-Review
+
+- Spec coverage: layout order (Task 1), add/overflow/close/restore/maximize (Task 2), shortcuts (Task 3), drag (Task 4), multi-screen/desktop/activity/fullscreen/hotplug (Task 5), packaging and docs (Task 6).
+- Type consistency: `slotRects`, `directionalTarget`, `chooseVictimIndex`, `swapSlots`, `stateKey`, `resolveRoot`, `stateFor`, `addToState`, `detachFromState` are named consistently across all tasks.
+- Manual-only behavior is called out per task; pure layout and eligibility logic has automated tests.
+- Review Focus items each map to a task test or manual check.
