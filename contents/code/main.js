@@ -322,7 +322,6 @@
             }
 
             module.exports = {
-                pendingTimers,
                 defer,
             };
         },
@@ -848,8 +847,6 @@
             }
 
             module.exports = {
-                activeDrag,
-                pendingDrop,
                 dragIsResize,
                 onInteractiveMoveResizeStarted,
                 onInteractiveMoveResizeFinished,

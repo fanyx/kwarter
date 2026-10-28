@@ -16,6 +16,5 @@ function defer(fn) {
 }
 
 module.exports = {
-    pendingTimers,
     defer,
 };

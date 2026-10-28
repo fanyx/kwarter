@@ -146,8 +146,6 @@ function isDragOwned(w) {
 }
 
 module.exports = {
-    activeDrag,
-    pendingDrop,
     dragIsResize,
     onInteractiveMoveResizeStarted,
     onInteractiveMoveResizeFinished,
