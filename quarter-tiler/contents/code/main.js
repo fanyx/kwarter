@@ -356,6 +356,19 @@ function addWindow(w) {
             return;
         }
 
+        try {
+            if (w.tile !== null && w.tile !== undefined) {
+                w.tile = null;
+            }
+            if (w.tile !== null && w.tile !== undefined) {
+                print(`quarter-tiler: native tile still attached for ${windowId(w)}`);
+                return;
+            }
+        } catch (e) {
+            print(`quarter-tiler: failed to detach native tile for ${windowId(w)}: ${e}`);
+            return;
+        }
+
         retriedOutput.delete(w);
         const state = stateFor(output, desktop);
 
@@ -392,15 +405,23 @@ function removeWindow(w) {
             state.minimized.pop();
         }
 
+        let restored = null;
         if (wasVisible && state.minimized.length > 0) {
-            const restored = state.minimized.pop();
+            restored = state.minimized.pop();
             restored.minimized = false;
             state.slots.splice(index, 0, restored);
             touch(state, restored);
-            workspace.activeWindow = restored;
         }
 
         scheduleApply(state);
+
+        if (restored) {
+            try {
+                workspace.activeWindow = restored;
+            } catch (e) {
+                print(`quarter-tiler: failed to activate restored window ${windowId(restored)}: ${e}`);
+            }
+        }
     } catch (e) {
         print(`quarter-tiler: removeWindow failed: ${e}`);
     }
@@ -427,6 +448,40 @@ function scheduleApply(state) {
     });
 }
 
+function maximizeModeOf(w) {
+    try {
+        if (typeof w.maximizeMode === "number") {
+            return w.maximizeMode;
+        }
+        if (typeof w.maximizeMode === "function") {
+            return w.maximizeMode();
+        }
+        if (typeof w.maximized === "boolean") {
+            return w.maximized ? 3 : 0;
+        }
+    } catch (e) {
+        print(`quarter-tiler: failed to read maximize state for ${windowId(w)}: ${e}`);
+    }
+    return null;
+}
+
+function setMaximizeIfNeeded(w, vertical, horizontal) {
+    if (!w || typeof w.setMaximize !== "function") {
+        return;
+    }
+    if (w.fullScreen) {
+        return;
+    }
+
+    const desired = (vertical ? 1 : 0) | (horizontal ? 2 : 0);
+    const current = maximizeModeOf(w);
+    if (current !== null && (current & 3) === desired) {
+        return;
+    }
+
+    w.setMaximize(vertical, horizontal);
+}
+
 function verifyState(state, targets) {
     if (!state || !targets || targets.length === 0) {
         return;
@@ -437,6 +492,9 @@ function verifyState(state, targets) {
             try {
                 const w = target.w;
                 if (!isAlive(w) || w.fullScreen) {
+                    continue;
+                }
+                if (findStateContaining(w) !== state || state.slots.indexOf(w) === -1) {
                     continue;
                 }
                 if (!rectsClose(w.frameGeometry, target.rect, 1)) {
@@ -480,17 +538,15 @@ function applyState(state) {
         }
 
         if (n === 1) {
-            const only = state.slots[0];
-            if (!only.fullScreen) {
-                only.setMaximize(true, true);
-            }
+            setMaximizeIfNeeded(state.slots[0], true, true);
             return;
         }
 
         for (const w of state.slots) {
-            if (w.setMaximize) {
-                w.setMaximize(false, false);
+            if (w.fullScreen) {
+                continue;
             }
+            setMaximizeIfNeeded(w, false, false);
         }
 
         const rects = slotRects(n, area, GAP);
